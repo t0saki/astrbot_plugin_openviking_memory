@@ -174,6 +174,7 @@ class OpenVikingMemoryPlugin(Star):
     @filter.event_message_type(EventMessageType.ALL)
     async def on_user_message(self, event: AstrMessageEvent):
         info = self._extract_event_info(event)
+        self.logger.info("[OV] msg from %s in %s", info["sender_id"], info["group_id"] or "DM")
         self._log(f"msg from {info['sender_id']}: {info['text'][:40]}")
         if not info["text"].strip():
             return
@@ -430,6 +431,9 @@ class OpenVikingMemoryPlugin(Star):
             f"Last commit: {_fmt_ts(sched['last_commit_ts'])}",
             f"Backfill: {bf_status}",
             f"Venues seen: {len(self._venue_auth)}",
+            f"Logger: {self.logger.name} handlers={len(self.logger.handlers)}"
+            f" parent={self.logger.parent.name if self.logger.parent else 'none'}"
+            f" effective_level={self.logger.getEffectiveLevel()}",
         ]
         if self._diag:
             lines.append("--- Recent events ---")
