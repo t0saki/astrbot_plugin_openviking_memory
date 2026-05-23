@@ -90,9 +90,7 @@
 
 将 `url` 和 `Authorization` 替换为实际的 OV 服务端地址和 API key。
 
-> **为什么推荐 Root key？** 插件的自动召回使用 venue user key，只能搜索当前 venue 自己的记忆。但 MCP 工具由 LLM 主动调用，需要跨 venue 搜索所有用户的记忆才有价值。Admin key 只能看到 admin 自己的内容，只有 Root key 能搜到所有 venue user 的记忆。代价是 LLM 可能搜到不相关的 venue 的内容——这需要通过 system prompt 引导 LLM 自行判断搜索结果的相关性。
->
-> 由于 AstrBot 插件架构限制，插件无法自动注册 MCP 服务，需手动添加。不添加不影响插件的自动召回/捕获功能，但 LLM 将无法主动发起记忆搜索或写入。
+> 由于 AstrBot 插件架构限制，插件无法自动注册 MCP 服务（需手动添加），也无法根据当前 venue 动态切换鉴权 header。因此 MCP 需要配置一个固定的 key：推荐使用 Root key，这样 LLM 能跨 venue 搜索所有用户的记忆；Admin key 只能看到 admin 自己的内容。代价是 LLM 可能搜到不相关 venue 的内容，需要通过 system prompt 引导其自行判断相关性。不添加 MCP 不影响插件的自动召回/捕获功能，但 LLM 将无法主动发起记忆搜索或写入。
 
 ## 命令
 

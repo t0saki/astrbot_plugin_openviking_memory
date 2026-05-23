@@ -84,9 +84,7 @@ We strongly recommend adding the OpenViking MCP server in AstrBot WebUI → Plug
 
 Replace `url` and `Authorization` with your actual OV server address and API key.
 
-> **Why Root key?** The plugin's auto-recall uses per-venue user keys, scoped to the current venue's memories only. MCP tools, however, are invoked proactively by the LLM and need cross-venue visibility to be useful. Admin keys can only see the admin's own content; only Root keys can search across all venue users' memories. The trade-off is that the LLM may retrieve content from unrelated venues — guide the LLM via system prompt to judge relevance of search results.
->
-> Due to AstrBot plugin architecture limitations, the plugin cannot register MCP servers automatically — manual setup is required. Without it, the plugin's auto-recall/capture still works, but the LLM won't be able to proactively search or write memories.
+> Due to AstrBot plugin architecture limitations, the plugin cannot register MCP servers automatically (manual setup required) and cannot dynamically switch auth headers based on the current venue. A fixed key must be configured: Root key is recommended so the LLM can search across all venue users' memories; Admin keys can only see the admin's own content. The trade-off is that the LLM may retrieve content from unrelated venues — guide it via system prompt to judge relevance. Without MCP, the plugin's auto-recall/capture still works, but the LLM won't be able to proactively search or write memories.
 
 ## Commands
 
