@@ -10,9 +10,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.event.filter import EventMessageType, PermissionType
-from astrbot.api.star import Context, Star
+from astrbot.api.star import Context, Star, register
 
 from .ov_client.backfill import BackfillManager
 from .ov_client.client import OVClient
@@ -39,12 +40,18 @@ from .ov_client.parts import (
 )
 from .ov_client.recall import recall_and_format
 
-logger = logging.getLogger("astrbot")
 
-
+@register(
+    "astrbot_plugin_openviking_memory",
+    "tosaki",
+    "OpenViking Memory Plugin",
+    "0.1.0",
+    "https://github.com/t0saki/astrbot_plugin_openviking_memory",
+)
 class OpenVikingMemoryPlugin(Star):
-    def __init__(self, context: Context, config=None):
+    def __init__(self, context: Context, config: AstrBotConfig) -> None:
         super().__init__(context)
+        self.logger = logging.getLogger("astrbot")
         raw_config = dict(config) if config else {}
         self.cfg = PluginConfig(raw_config)
 
@@ -152,15 +159,15 @@ class OpenVikingMemoryPlugin(Star):
     async def on_loaded(self):
         ok = await self.ov.health()
         if ok:
-            logger.info(
+            self.logger.info(
                 "OV server reachable at %s (account=%s)",
                 self.cfg.ov_base_url,
                 self.ov.account_id or "(not set)",
             )
         else:
-            logger.warning("OV server NOT reachable at %s", self.cfg.ov_base_url)
+            self.logger.warning("OV server NOT reachable at %s", self.cfg.ov_base_url)
         if not self.ov.account_id:
-            logger.warning("account_id is empty — user isolation will NOT work")
+            self.logger.warning("account_id is empty — user isolation will NOT work")
 
     # -- hook: capture user messages ------------------------------------------
 
@@ -458,7 +465,7 @@ class OpenVikingMemoryPlugin(Star):
     async def terminate(self):
         await self.scheduler.flush_all()
         await self.ov.close()
-        logger.info("OpenViking memory plugin terminated, all sessions flushed")
+        self.logger.info("OpenViking memory plugin terminated, all sessions flushed")
 
 
 def _fmt_ts(ts: float) -> str:
