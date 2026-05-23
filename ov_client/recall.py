@@ -22,6 +22,7 @@ async def recall_and_format(
     venue_id: str,
     ov_user_id: str,
     api_key: str | None = None,
+    user_id: str | None = None,
 ) -> str | None:
     if not cfg.auto_recall_enabled or not query.strip():
         return None
@@ -33,11 +34,12 @@ async def recall_and_format(
         limit=cfg.recall_limit,
         min_score=cfg.recall_min_score,
         api_key=api_key,
+        user_id=user_id,
     )
     if not items:
         return None
 
-    return await _build_injection_block(client, cfg, items, venue_id, api_key)
+    return await _build_injection_block(client, cfg, items, venue_id, api_key, user_id)
 
 
 async def _build_injection_block(
@@ -46,6 +48,7 @@ async def _build_injection_block(
     items: list[dict[str, Any]],
     venue_id: str,
     api_key: str | None,
+    user_id: str | None = None,
 ) -> str | None:
     budget = cfg.recall_token_budget
     is_group = venue_is_group(venue_id)
@@ -70,7 +73,7 @@ async def _build_injection_block(
         header += "]"
 
         if budget > 0:
-            content = await _resolve_content(client, item, cfg, api_key)
+            content = await _resolve_content(client, item, cfg, api_key, user_id)
             line = f"- {header} {content}"
             cost = estimate_tokens(line)
             if cost > budget and content_count > 0:
@@ -91,6 +94,7 @@ async def _resolve_content(
     item: dict[str, Any],
     cfg: PluginConfig,
     api_key: str | None,
+    user_id: str | None = None,
 ) -> str:
     uri = item.get("uri", "")
     abstract = (item.get("abstract") or item.get("overview") or "").strip()

@@ -32,13 +32,19 @@ class OVClient:
         self.account_id = account_id
         self._http = httpx.AsyncClient(timeout=timeout)
 
-    def _headers(self, api_key: str | None = None) -> dict[str, str]:
+    def _headers(
+        self,
+        api_key: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, str]:
         key = api_key or self.api_key
         h: dict[str, str] = {"Content-Type": "application/json"}
         if key:
             h["Authorization"] = f"Bearer {key}"
         if self.account_id:
             h["X-OpenViking-Account"] = self.account_id
+        if user_id:
+            h["X-OpenViking-User"] = user_id
         return h
 
     async def close(self):
@@ -81,13 +87,14 @@ class OVClient:
         session_id: str,
         payload: dict[str, Any],
         api_key: str | None = None,
+        user_id: str | None = None,
     ) -> bool:
         import json as _json
 
         body = _json.dumps(payload, ensure_ascii=False, default=str)
         r = await self._http.post(
             f"{self.base_url}/api/v1/sessions/{quote(session_id)}/messages",
-            headers=self._headers(api_key=api_key),
+            headers=self._headers(api_key=api_key, user_id=user_id),
             content=body,
         )
         if r.status_code != 200:
@@ -98,10 +105,11 @@ class OVClient:
         self,
         session_id: str,
         api_key: str | None = None,
+        user_id: str | None = None,
     ) -> dict[str, Any] | None:
         r = await self._http.post(
             f"{self.base_url}/api/v1/sessions/{quote(session_id)}/commit",
-            headers=self._headers(api_key=api_key),
+            headers=self._headers(api_key=api_key, user_id=user_id),
             json={},
         )
         if r.status_code == 200:
@@ -113,12 +121,13 @@ class OVClient:
         self,
         session_id: str,
         api_key: str | None = None,
+        user_id: str | None = None,
         auto_create: bool = False,
     ) -> dict[str, Any] | None:
         q = "?auto_create=true" if auto_create else ""
         r = await self._http.get(
             f"{self.base_url}/api/v1/sessions/{quote(session_id)}{q}",
-            headers=self._headers(api_key=api_key),
+            headers=self._headers(api_key=api_key, user_id=user_id),
         )
         if r.status_code == 200:
             return r.json().get("result")
@@ -134,6 +143,7 @@ class OVClient:
         min_score: float = 0.35,
         session_id: str = "",
         api_key: str | None = None,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         body: dict[str, Any] = {
             "query": query,
@@ -146,7 +156,7 @@ class OVClient:
             body["session_id"] = session_id
         r = await self._http.post(
             f"{self.base_url}/api/v1/search/search",
-            headers=self._headers(api_key=api_key),
+            headers=self._headers(api_key=api_key, user_id=user_id),
             json=body,
         )
         if r.status_code == 200:

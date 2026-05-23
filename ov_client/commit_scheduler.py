@@ -39,11 +39,11 @@ class CommitScheduler:
         self._client = client
         self._cfg = cfg
         self._sessions: dict[str, SessionState] = {}
-        self._api_keys: dict[str, str] = {}
+        self._auth: dict[str, dict] = {}
         self._lock = asyncio.Lock()
 
-    def set_api_key(self, session_id: str, api_key: str):
-        self._api_keys[session_id] = api_key
+    def set_auth(self, session_id: str, auth: dict):
+        self._auth[session_id] = auth
 
     def _get_state(self, session_id: str) -> SessionState:
         if session_id not in self._sessions:
@@ -91,9 +91,9 @@ class CommitScheduler:
                 return
             state.committing = True
 
-        api_key = self._api_keys.get(session_id)
+        auth = self._auth.get(session_id, {})
         try:
-            result = await self._client.commit_session(session_id, api_key=api_key)
+            result = await self._client.commit_session(session_id, **auth)
             if result is not None:
                 logger.info(
                     "committed session %s (%d msgs, ~%d tokens)",

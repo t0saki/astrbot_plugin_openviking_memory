@@ -42,7 +42,7 @@ class BackfillManager:
         venue_id: str,
         platform: str,
         group_id: str,
-        api_key: str,
+        auth: dict,
         event: Any = None,
         fanout_write: Callable | None = None,
     ):
@@ -68,7 +68,7 @@ class BackfillManager:
 
         self._running.add(venue_id)
         asyncio.create_task(
-            self._run_backfill(venue_id, platform, group_id, api_key, event, fanout_write)
+            self._run_backfill(venue_id, platform, group_id, auth, event, fanout_write)
         )
 
     async def force_backfill(
@@ -76,21 +76,21 @@ class BackfillManager:
         venue_id: str,
         platform: str,
         group_id: str,
-        api_key: str,
+        auth: dict,
         event: Any = None,
         fanout_write: Callable | None = None,
     ):
         done_key = f"backfill_done::{venue_id}"
         await self._kv_put(done_key, "")
         self._running.discard(venue_id)
-        await self.maybe_trigger(venue_id, platform, group_id, api_key, event, fanout_write)
+        await self.maybe_trigger(venue_id, platform, group_id, auth, event, fanout_write)
 
     async def _run_backfill(
         self,
         venue_id: str,
         platform: str,
         group_id: str,
-        api_key: str,
+        auth: dict,
         event: Any,
         fanout_write: Callable | None,
     ):
@@ -118,7 +118,7 @@ class BackfillManager:
                     sender_id = msg.get("sender_id", "")
                     parts = [user_text_part(text, sender_name, sender_id, is_group)]
                     payload = build_message("user", parts)
-                    await self._client.add_message(session_id, payload, api_key=api_key)
+                    await self._client.add_message(session_id, payload, **auth)
 
                     if fanout_write and is_group:
                         await fanout_write(
@@ -127,7 +127,6 @@ class BackfillManager:
                             sender_id=sender_id,
                             origin_venue_id=venue_id,
                             platform=platform,
-                            api_key=api_key,
                             event=event,
                         )
                     count += 1
@@ -136,7 +135,7 @@ class BackfillManager:
                     await asyncio.sleep(self._cfg.backfill_throttle_ms / 1000.0)
 
             if count > 0:
-                await self._client.commit_session(session_id, api_key=api_key)
+                await self._client.commit_session(session_id, **auth)
 
             logger.info("backfill %s: ingested %d messages", venue_id, count)
             await self._mark_done(venue_id, count)

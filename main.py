@@ -67,7 +67,10 @@ class OpenVikingMemoryPlugin(Star):
             kv_get=self._kv_get,
             kv_put=self._kv_put,
         )
-        self._venue_keys: dict[str, str] = {}
+        # venue_id -> (api_key, fallback_user_id)
+        # api_key set = use it directly (key encodes identity)
+        # api_key empty + user_id set = use admin key + X-OpenViking-User header
+        self._venue_auth: dict[str, tuple[str, str]] = {}
 
     async def _kv_get(self, key: str, default: Any = None) -> Any:
         return await self.get_kv_data(key, default)
@@ -75,32 +78,41 @@ class OpenVikingMemoryPlugin(Star):
     async def _kv_put(self, key: str, value: Any) -> None:
         await self.put_kv_data(key, value)
 
-    # -- venue user provisioning ----------------------------------------------
+    # -- auth helpers ---------------------------------------------------------
 
-    async def _ensure_venue_user(self, venue_id: str, ov_user_id: str) -> str:
-        """Ensure OV user exists for this venue; return the user's API key."""
-        if venue_id in self._venue_keys:
-            return self._venue_keys[venue_id]
+    async def _ensure_venue_user(self, venue_id: str, ov_user_id: str):
+        """Ensure OV user exists for this venue. Caches auth pair."""
+        if venue_id in self._venue_auth:
+            return
 
         cached_key = await self._kv_get(f"ov_user_key::{venue_id}")
         if cached_key:
-            self._venue_keys[venue_id] = cached_key
-            return cached_key
+            self._venue_auth[venue_id] = (cached_key, "")
+            return
 
         if not self.cfg.ov_admin_api_key:
-            logger.warning("no admin API key configured; using admin key for all calls")
-            return ""
+            self._venue_auth[venue_id] = ("", "")
+            return
 
         result = await self.ov.create_user(ov_user_id, self.cfg.ov_admin_api_key)
         if result and "user_key" in result:
             key = result["user_key"]
             await self._kv_put(f"ov_user_key::{venue_id}", key)
-            self._venue_keys[venue_id] = key
+            self._venue_auth[venue_id] = (key, "")
             logger.info("created OV user %s for venue %s", ov_user_id, venue_id)
-            return key
+            return
 
-        self._venue_keys[venue_id] = ""
-        return ""
+        # 409 or other failure — user exists but key lost; fallback to admin + header
+        self._venue_auth[venue_id] = ("", ov_user_id)
+        logger.info("venue %s: admin key + X-OpenViking-User fallback", ov_user_id)
+
+    def _auth(self, venue_id: str) -> dict[str, str | None]:
+        """Return kwargs for OVClient calls: api_key and/or user_id."""
+        api_key, user_id = self._venue_auth.get(venue_id, ("", ""))
+        return {
+            "api_key": api_key or None,
+            "user_id": user_id or None,
+        }
 
     def _extract_event_info(self, event: AstrMessageEvent) -> dict:
         platform = getattr(event, "get_platform_name", lambda: "unknown")()
@@ -123,12 +135,12 @@ class OpenVikingMemoryPlugin(Star):
         ok = await self.ov.health()
         if ok:
             logger.info(
-                "OpenViking server reachable at %s (account=%s)",
+                "OV server reachable at %s (account=%s)",
                 self.cfg.ov_base_url,
                 self.ov.account_id or "(not set)",
             )
         else:
-            logger.warning("OpenViking server NOT reachable at %s", self.cfg.ov_base_url)
+            logger.warning("OV server NOT reachable at %s", self.cfg.ov_base_url)
         if not self.ov.account_id:
             logger.warning("account_id is empty — user isolation will NOT work")
 
@@ -147,7 +159,8 @@ class OpenVikingMemoryPlugin(Star):
         ov_user_id = derive_ov_user_id(
             self.cfg, info["platform"], info["group_id"], info["sender_id"]
         )
-        api_key = await self._ensure_venue_user(venue_id, ov_user_id)
+        await self._ensure_venue_user(venue_id, ov_user_id)
+        auth = self._auth(venue_id)
         session_id = derive_session_id(venue_id)
         is_group = venue_is_group(venue_id)
 
@@ -158,8 +171,8 @@ class OpenVikingMemoryPlugin(Star):
             self._append_media_placeholders(msg_chain, parts)
 
         payload = build_message("user", parts)
-        await self.ov.add_message(session_id, payload, api_key=api_key)
-        self.scheduler.set_api_key(session_id, api_key)
+        await self.ov.add_message(session_id, payload, **auth)
+        self.scheduler.set_auth(session_id, auth)
 
         token_est = estimate_tokens(info["text"])
         await self.scheduler.record_message(session_id, token_est)
@@ -174,7 +187,6 @@ class OpenVikingMemoryPlugin(Star):
                 info["sender_id"],
                 venue_id,
                 info["platform"],
-                api_key,
                 event,
             )
 
@@ -182,9 +194,9 @@ class OpenVikingMemoryPlugin(Star):
             venue_id,
             info["platform"],
             info["group_id"],
-            api_key,
+            auth,
             event=event,
-            fanout_write=self._fanout_backfill_message if mode == "venue_user_fanout" else None,
+            fanout_write=(self._fanout_backfill_message if mode == "venue_user_fanout" else None),
         )
 
     def _append_media_placeholders(self, msg_chain: Any, parts: list):
@@ -207,7 +219,6 @@ class OpenVikingMemoryPlugin(Star):
         sender_id: str,
         origin_venue_id: str,
         platform: str,
-        api_key: str,
         event: Any,
     ):
         targets = await self.fanout.get_fanout_targets(
@@ -218,12 +229,13 @@ class OpenVikingMemoryPlugin(Star):
         )
         for target_venue_id in targets:
             target_ov_user_id = f"astrbot-{target_venue_id}"
-            target_key = await self._ensure_venue_user(target_venue_id, target_ov_user_id)
+            await self._ensure_venue_user(target_venue_id, target_ov_user_id)
+            target_auth = self._auth(target_venue_id)
             target_session_id = derive_session_id(target_venue_id)
             parts = [fanout_text_part(text, origin_venue_id, sender_name, sender_id)]
             payload = build_message("user", parts)
-            await self.ov.add_message(target_session_id, payload, api_key=target_key)
-            self.scheduler.set_api_key(target_session_id, target_key)
+            await self.ov.add_message(target_session_id, payload, **target_auth)
+            self.scheduler.set_auth(target_session_id, target_auth)
             await self.scheduler.record_message(target_session_id, estimate_tokens(text))
 
     async def _fanout_backfill_message(self, **kwargs):
@@ -233,7 +245,6 @@ class OpenVikingMemoryPlugin(Star):
             sender_id=kwargs["sender_id"],
             origin_venue_id=kwargs["origin_venue_id"],
             platform=kwargs["platform"],
-            api_key=kwargs["api_key"],
             event=kwargs.get("event"),
         )
 
@@ -256,7 +267,7 @@ class OpenVikingMemoryPlugin(Star):
         ov_user_id = derive_ov_user_id(
             self.cfg, info["platform"], info["group_id"], info["sender_id"]
         )
-        api_key = self._venue_keys.get(venue_id, "")
+        auth = self._auth(venue_id)
 
         block = await recall_and_format(
             self.ov,
@@ -264,7 +275,7 @@ class OpenVikingMemoryPlugin(Star):
             query,
             venue_id,
             ov_user_id,
-            api_key=api_key,
+            **auth,
         )
         if block:
             req.system_prompt = (req.system_prompt or "") + "\n\n" + block
@@ -290,11 +301,11 @@ class OpenVikingMemoryPlugin(Star):
         if not reply_text.strip():
             return
 
-        api_key = self._venue_keys.get(venue_id, "")
+        auth = self._auth(venue_id)
         session_id = derive_session_id(venue_id)
         parts = [assistant_text_part(reply_text)]
         payload = build_message("assistant", parts)
-        await self.ov.add_message(session_id, payload, api_key=api_key)
+        await self.ov.add_message(session_id, payload, **auth)
         await self.scheduler.record_message(session_id, estimate_tokens(reply_text))
 
         mode = get_effective_mode(self.cfg, info["group_id"])
@@ -306,11 +317,11 @@ class OpenVikingMemoryPlugin(Star):
                 event=event,
             )
             for target_venue_id in targets:
-                target_key = self._venue_keys.get(target_venue_id, "")
+                target_auth = self._auth(target_venue_id)
                 target_session_id = derive_session_id(target_venue_id)
                 fo_parts = [fanout_text_part(reply_text, venue_id)]
                 fo_payload = build_message("assistant", fo_parts)
-                await self.ov.add_message(target_session_id, fo_payload, api_key=target_key)
+                await self.ov.add_message(target_session_id, fo_payload, **target_auth)
 
     # -- hook: tool I/O capture (requires AstrBot >= 4.23.1) --------------------
 
@@ -324,11 +335,11 @@ class OpenVikingMemoryPlugin(Star):
             return
         t_name = str(kwargs.get("tool_name", args[0] if args else ""))
         t_input = kwargs.get("tool_input", args[1] if len(args) > 1 else None)
-        api_key = self._venue_keys.get(venue_id, "")
+        auth = self._auth(venue_id)
         session_id = derive_session_id(venue_id)
         parts = [tool_call_part(t_name, t_input)]
         payload = build_message("assistant", parts)
-        await self.ov.add_message(session_id, payload, api_key=api_key)
+        await self.ov.add_message(session_id, payload, **auth)
 
     @filter.on_llm_tool_respond()
     async def on_tool_respond(self, event: AstrMessageEvent, *args, **kwargs):
@@ -340,11 +351,11 @@ class OpenVikingMemoryPlugin(Star):
             return
         t_name = str(kwargs.get("tool_name", args[0] if args else ""))
         t_output = kwargs.get("tool_output", args[-1] if args else None)
-        api_key = self._venue_keys.get(venue_id, "")
+        auth = self._auth(venue_id)
         session_id = derive_session_id(venue_id)
         parts = [tool_result_part(t_name, t_output)]
         payload = build_message("user", parts)
-        await self.ov.add_message(session_id, payload, api_key=api_key)
+        await self.ov.add_message(session_id, payload, **auth)
 
     # -- hook: after message sent → commit eval -------------------------------
 
@@ -371,14 +382,20 @@ class OpenVikingMemoryPlugin(Star):
         ov_user_id = derive_ov_user_id(
             self.cfg, info["platform"], info["group_id"], info["sender_id"]
         )
-        venue_key = self._venue_keys.get(venue_id, "")
+        api_key, fallback_uid = self._venue_auth.get(venue_id, ("", ""))
+        if api_key:
+            key_status = "per-venue key"
+        elif fallback_uid:
+            key_status = f"admin fallback (user={fallback_uid})"
+        else:
+            key_status = "no auth"
 
         lines = [
             "OpenViking Memory Plugin v0.1.0",
             f"Server: {self.cfg.ov_base_url} ({'OK' if healthy else 'UNREACHABLE'})",
             f"Account: {self.ov.account_id or '(not set)'}",
             f"OV User: {ov_user_id}",
-            f"User Key: {'set' if venue_key else 'not created'}",
+            f"Auth: {key_status}",
             f"Isolation: {mode}",
             f"Venue: {venue_id}",
             f"Pending: {sched['pending_messages']} msgs / ~{sched['pending_tokens']} tokens",
@@ -395,16 +412,17 @@ class OpenVikingMemoryPlugin(Star):
         ov_user_id = derive_ov_user_id(
             self.cfg, info["platform"], info["group_id"], info["sender_id"]
         )
-        api_key = await self._ensure_venue_user(venue_id, ov_user_id)
+        await self._ensure_venue_user(venue_id, ov_user_id)
+        auth = self._auth(venue_id)
         mode = get_effective_mode(self.cfg, info["group_id"])
 
         await self.backfill.force_backfill(
             venue_id,
             info["platform"],
             info["group_id"],
-            api_key,
+            auth,
             event=event,
-            fanout_write=self._fanout_backfill_message if mode == "venue_user_fanout" else None,
+            fanout_write=(self._fanout_backfill_message if mode == "venue_user_fanout" else None),
         )
         yield event.plain_result(f"Backfill triggered for {venue_id}")
 
