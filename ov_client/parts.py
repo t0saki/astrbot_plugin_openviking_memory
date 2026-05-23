@@ -78,6 +78,7 @@ def estimate_tokens(text: str) -> int:
 
 def _safe_json(obj: Any) -> str:
     import json
+
     try:
         return json.dumps(obj, ensure_ascii=False, default=str)
     except Exception:

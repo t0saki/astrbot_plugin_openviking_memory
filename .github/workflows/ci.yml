@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install pyyaml httpx ruff
+
+      - name: Validate config schema
+        run: |
+          python3 -c "
+          import json, sys
+          with open('_conf_schema.json') as f:
+              schema = json.load(f)
+          errors = []
+          VALID_TYPES = {'int','float','bool','string','text','list','file','object','template_list'}
+          for k, v in schema.items():
+              t = v.get('type', '')
+              if t not in VALID_TYPES:
+                  errors.append(f'{k}: unsupported type {t!r}')
+              if t == 'list' and 'items' not in v:
+                  errors.append(f'{k}: list type missing items')
+          if errors:
+              for e in errors:
+                  print(f'ERROR: {e}')
+              sys.exit(1)
+          print(f'Schema OK: {len(schema)} fields')
+          "
+
+      - name: Validate metadata.yaml
+        run: |
+          python3 -c "
+          import yaml, sys
+          with open('metadata.yaml') as f:
+              meta = yaml.safe_load(f)
+          required = ['name', 'description', 'author', 'version']
+          missing = [f for f in required if f not in meta]
+          if missing:
+              print(f'ERROR: metadata.yaml missing: {missing}')
+              sys.exit(1)
+          print(f'metadata OK: {meta[\"name\"]} v{meta[\"version\"]}')
+          "
+
+      - name: Syntax check all Python files
+        run: |
+          python3 -c "
+          import ast, glob, sys
+          errors = []
+          for f in sorted(glob.glob('**/*.py', recursive=True)):
+              try:
+                  with open(f) as fh:
+                      ast.parse(fh.read())
+              except SyntaxError as e:
+                  errors.append(f'{f}:{e.lineno}: {e.msg}')
+          if errors:
+              for e in errors:
+                  print(f'ERROR: {e}')
+              sys.exit(1)
+          print(f'Syntax OK: {len(glob.glob(\"**/*.py\", recursive=True))} files')
+          "
+
+      - name: Check relative imports in main.py
+        run: |
+          python3 -c "
+          import sys
+          errors = []
+          with open('main.py') as f:
+              for i, line in enumerate(f, 1):
+                  if line.startswith('from ov_client'):
+                      errors.append(f'main.py:{i}: must use relative import (from .ov_client)')
+          if errors:
+              for e in errors:
+                  print(f'ERROR: {e}')
+              sys.exit(1)
+          print('Import check OK')
+          "
+
+      - name: Lint with ruff
+        run: ruff check . --select E,W,F,I
+
+      - name: Check formatting with ruff
+        run: ruff format --check .

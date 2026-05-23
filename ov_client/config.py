@@ -10,7 +10,6 @@ import os
 import re
 from typing import Any
 
-
 _DEFAULTS: dict[str, Any] = {
     "ov_base_url": "http://localhost:1933",
     "ov_admin_api_key": "",

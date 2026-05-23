@@ -11,7 +11,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Callable, Awaitable
+from typing import Any, Awaitable, Callable
 
 from .client import OVClient
 from .config import PluginConfig
@@ -109,7 +109,7 @@ class BackfillManager:
             count = 0
 
             for batch_start in range(0, len(messages), self._cfg.backfill_batch_size):
-                batch = messages[batch_start:batch_start + self._cfg.backfill_batch_size]
+                batch = messages[batch_start : batch_start + self._cfg.backfill_batch_size]
                 for msg in batch:
                     text = msg.get("text", "")
                     if not text.strip():
@@ -207,12 +207,14 @@ class BackfillManager:
                         raw_msg = " ".join(t for t in text_parts if t)
 
                     sender = msg.get("sender", {})
-                    results.append({
-                        "text": str(raw_msg),
-                        "sender_name": sender.get("nickname", sender.get("card", "")),
-                        "sender_id": str(msg.get("user_id", sender.get("user_id", ""))),
-                        "ts": str(ts),
-                    })
+                    results.append(
+                        {
+                            "text": str(raw_msg),
+                            "sender_name": sender.get("nickname", sender.get("card", "")),
+                            "sender_id": str(msg.get("user_id", sender.get("user_id", ""))),
+                            "ts": str(ts),
+                        }
+                    )
 
                     if len(results) >= max_msgs:
                         break

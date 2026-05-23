@@ -9,35 +9,36 @@ from __future__ import annotations
 
 from typing import Any
 
-from astrbot.api.event import filter, AstrMessageEvent
+from astrbot.api import logger
+from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.event.filter import EventMessageType, PermissionType
 from astrbot.api.star import Context, Star
-from astrbot.api import logger
 
+from .ov_client.backfill import BackfillManager
 from .ov_client.client import OVClient
+from .ov_client.commit_scheduler import CommitScheduler
 from .ov_client.config import PluginConfig
+from .ov_client.fanout import FanoutManager
 from .ov_client.identity import (
-    derive_venue,
     derive_ov_user_id,
     derive_session_id,
+    derive_venue,
     get_effective_mode,
     venue_is_group,
 )
 from .ov_client.parts import (
-    build_message,
-    user_text_part,
     assistant_text_part,
-    image_placeholder_part,
-    file_placeholder_part,
+    build_message,
+    estimate_tokens,
     fanout_text_part,
+    file_placeholder_part,
+    image_placeholder_part,
     tool_call_part,
     tool_result_part,
-    estimate_tokens,
+    user_text_part,
 )
 from .ov_client.recall import recall_and_format
-from .ov_client.commit_scheduler import CommitScheduler
-from .ov_client.fanout import FanoutManager
-from .ov_client.backfill import BackfillManager
+
 
 class OpenVikingMemoryPlugin(Star):
     def __init__(self, context: Context, config=None):
@@ -55,7 +56,8 @@ class OpenVikingMemoryPlugin(Star):
             kv_put=self._kv_put,
         )
         self.backfill = BackfillManager(
-            self.ov, self.cfg,
+            self.ov,
+            self.cfg,
             kv_get=self._kv_get,
             kv_put=self._kv_put,
         )
@@ -130,7 +132,9 @@ class OpenVikingMemoryPlugin(Star):
         if self.cfg.is_bypassed(venue_id):
             return
 
-        ov_user_id = derive_ov_user_id(self.cfg, info["platform"], info["group_id"], info["sender_id"])
+        ov_user_id = derive_ov_user_id(
+            self.cfg, info["platform"], info["group_id"], info["sender_id"]
+        )
         api_key = await self._ensure_venue_user(venue_id, ov_user_id)
         session_id = derive_session_id(venue_id)
         is_group = venue_is_group(venue_id)
@@ -153,12 +157,20 @@ class OpenVikingMemoryPlugin(Star):
         mode = get_effective_mode(self.cfg, info["group_id"])
         if mode == "venue_user_fanout":
             await self._fanout_message(
-                info["text"], info["sender_name"], info["sender_id"],
-                venue_id, info["platform"], api_key, event,
+                info["text"],
+                info["sender_name"],
+                info["sender_id"],
+                venue_id,
+                info["platform"],
+                api_key,
+                event,
             )
 
         await self.backfill.maybe_trigger(
-            venue_id, info["platform"], info["group_id"], api_key,
+            venue_id,
+            info["platform"],
+            info["group_id"],
+            api_key,
             event=event,
             fanout_write=self._fanout_backfill_message if mode == "venue_user_fanout" else None,
         )
@@ -187,7 +199,10 @@ class OpenVikingMemoryPlugin(Star):
         event: Any,
     ):
         targets = await self.fanout.get_fanout_targets(
-            platform, sender_id, origin_venue_id, event=event,
+            platform,
+            sender_id,
+            origin_venue_id,
+            event=event,
         )
         for target_venue_id in targets:
             target_ov_user_id = f"astrbot-{target_venue_id}"
@@ -226,11 +241,18 @@ class OpenVikingMemoryPlugin(Star):
         if self.cfg.is_bypassed(venue_id):
             return
 
-        ov_user_id = derive_ov_user_id(self.cfg, info["platform"], info["group_id"], info["sender_id"])
+        ov_user_id = derive_ov_user_id(
+            self.cfg, info["platform"], info["group_id"], info["sender_id"]
+        )
         api_key = self._venue_keys.get(venue_id, "")
 
         block = await recall_and_format(
-            self.ov, self.cfg, query, venue_id, ov_user_id, api_key=api_key,
+            self.ov,
+            self.cfg,
+            query,
+            venue_id,
+            ov_user_id,
+            api_key=api_key,
         )
         if block:
             req.system_prompt = (req.system_prompt or "") + "\n\n" + block
@@ -251,10 +273,7 @@ class OpenVikingMemoryPlugin(Star):
             reply_text = resp.text or ""
         elif hasattr(resp, "result_chain"):
             chain = resp.result_chain or []
-            reply_text = " ".join(
-                getattr(c, "text", str(c)) for c in chain
-                if hasattr(c, "text")
-            )
+            reply_text = " ".join(getattr(c, "text", str(c)) for c in chain if hasattr(c, "text"))
 
         if not reply_text.strip():
             return
@@ -269,7 +288,10 @@ class OpenVikingMemoryPlugin(Star):
         mode = get_effective_mode(self.cfg, info["group_id"])
         if mode == "venue_user_fanout":
             targets = await self.fanout.get_fanout_targets(
-                info["platform"], info["sender_id"], venue_id, event=event,
+                info["platform"],
+                info["sender_id"],
+                venue_id,
+                event=event,
             )
             for target_venue_id in targets:
                 target_key = self._venue_keys.get(target_venue_id, "")
@@ -281,7 +303,9 @@ class OpenVikingMemoryPlugin(Star):
     # -- hook: tool I/O capture (requires AstrBot >= 4.23.1) --------------------
 
     @filter.on_using_llm_tool()
-    async def on_tool_call(self, event: AstrMessageEvent, tool_name: str = "", tool_input: Any = None, **kwargs):
+    async def on_tool_call(
+        self, event: AstrMessageEvent, tool_name: str = "", tool_input: Any = None, **kwargs
+    ):
         if not self.cfg.capture_tool_io:
             return
         info = self._extract_event_info(event)
@@ -295,7 +319,9 @@ class OpenVikingMemoryPlugin(Star):
         await self.ov.add_message(session_id, payload, api_key=api_key)
 
     @filter.on_llm_tool_respond()
-    async def on_tool_respond(self, event: AstrMessageEvent, tool_name: str = "", tool_output: Any = None, **kwargs):
+    async def on_tool_respond(
+        self, event: AstrMessageEvent, tool_name: str = "", tool_output: Any = None, **kwargs
+    ):
         if not self.cfg.capture_tool_io:
             return
         info = self._extract_event_info(event)
@@ -331,7 +357,7 @@ class OpenVikingMemoryPlugin(Star):
         mode = get_effective_mode(self.cfg, info["group_id"])
 
         lines = [
-            f"OpenViking Memory Plugin v0.1.0",
+            "OpenViking Memory Plugin v0.1.0",
             f"Server: {self.cfg.ov_base_url} ({'OK' if healthy else 'UNREACHABLE'})",
             f"Isolation: {mode}",
             f"Venue: {venue_id}",
@@ -346,12 +372,17 @@ class OpenVikingMemoryPlugin(Star):
     async def cmd_backfill(self, event: AstrMessageEvent):
         info = self._extract_event_info(event)
         venue_id = derive_venue(info["platform"], info["group_id"], info["sender_id"])
-        ov_user_id = derive_ov_user_id(self.cfg, info["platform"], info["group_id"], info["sender_id"])
+        ov_user_id = derive_ov_user_id(
+            self.cfg, info["platform"], info["group_id"], info["sender_id"]
+        )
         api_key = await self._ensure_venue_user(venue_id, ov_user_id)
         mode = get_effective_mode(self.cfg, info["group_id"])
 
         await self.backfill.force_backfill(
-            venue_id, info["platform"], info["group_id"], api_key,
+            venue_id,
+            info["platform"],
+            info["group_id"],
+            api_key,
             event=event,
             fanout_write=self._fanout_backfill_message if mode == "venue_user_fanout" else None,
         )
@@ -369,4 +400,5 @@ def _fmt_ts(ts: float) -> str:
     if ts <= 0:
         return "never"
     import datetime
+
     return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")

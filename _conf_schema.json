@@ -19,7 +19,7 @@
   },
   "isolation_overrides": {
     "description": "Per-group isolation mode overrides, e.g. {\"123456\": \"venue_user_fanout\"}",
-    "type": "dict",
+    "type": "object",
     "default": {}
   },
   "global_user_id": {

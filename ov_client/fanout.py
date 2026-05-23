@@ -15,10 +15,10 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, Callable, Awaitable
+from typing import Any, Awaitable, Callable
 
 from .config import PluginConfig
-from .identity import derive_session_id, derive_venue
+from .identity import derive_venue
 
 logger = logging.getLogger("astrbot_plugin_openviking_memory")
 
@@ -118,7 +118,8 @@ class FanoutManager:
                         continue
                     try:
                         members = await bot.api.call_action(
-                            "get_group_member_list", group_id=int(gid),
+                            "get_group_member_list",
+                            group_id=int(gid),
                         )
                         member_ids = {str(m.get("user_id", "")) for m in members}
                         if sender_id in member_ids:
@@ -175,7 +176,8 @@ class FanoutManager:
                 return []
             if platform == "aiocqhttp":
                 members = await bot.api.call_action(
-                    "get_group_member_list", group_id=int(group_id),
+                    "get_group_member_list",
+                    group_id=int(group_id),
                 )
                 return [str(m.get("user_id", "")) for m in members if m.get("user_id")]
         except Exception:
