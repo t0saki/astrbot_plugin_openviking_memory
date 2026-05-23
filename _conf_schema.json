@@ -19,7 +19,7 @@
   },
   "isolation_overrides": {
     "description": "Per-group isolation mode overrides, e.g. {\"123456\": \"venue_user_fanout\"}",
-    "type": "object",
+    "type": "dict",
     "default": {}
   },
   "global_user_id": {
@@ -105,6 +105,9 @@
   "bypass_patterns": {
     "description": "Regex patterns to skip OV operations for matching venue IDs",
     "type": "list",
+    "items": {
+      "type": "string"
+    },
     "default": []
   }
 }
