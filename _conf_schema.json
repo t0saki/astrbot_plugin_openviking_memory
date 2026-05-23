@@ -1,0 +1,110 @@
+{
+  "ov_base_url": {
+    "description": "OpenViking server URL",
+    "type": "string",
+    "default": "http://localhost:1933"
+  },
+  "ov_admin_api_key": {
+    "description": "Admin API key (only used to create venue users on first encounter)",
+    "type": "string"
+  },
+  "ov_account_id": {
+    "description": "OV account ID this plugin operates under",
+    "type": "string"
+  },
+  "isolation_mode": {
+    "description": "Memory isolation: venue_user (per-group/DM, default) | venue_user_fanout (cross-venue sharing) | global_user (single user)",
+    "type": "string",
+    "default": "venue_user"
+  },
+  "isolation_overrides": {
+    "description": "Per-group isolation mode overrides, e.g. {\"123456\": \"venue_user_fanout\"}",
+    "type": "object",
+    "default": {}
+  },
+  "global_user_id": {
+    "description": "OV user ID used in global_user mode",
+    "type": "string",
+    "default": "astrbot-global"
+  },
+  "auto_recall_enabled": {
+    "description": "Auto-recall memories on every LLM request",
+    "type": "bool",
+    "default": true
+  },
+  "recall_limit": {
+    "description": "Max number of memory entries to recall",
+    "type": "int",
+    "default": 8
+  },
+  "recall_min_score": {
+    "description": "Minimum semantic score threshold for recall",
+    "type": "float",
+    "default": 0.35
+  },
+  "recall_token_budget": {
+    "description": "Max tokens for injected recall context",
+    "type": "int",
+    "default": 2000
+  },
+  "commit_message_threshold": {
+    "description": "Auto-commit after this many pending messages",
+    "type": "int",
+    "default": 20
+  },
+  "commit_token_threshold": {
+    "description": "Auto-commit when pending tokens exceed this",
+    "type": "int",
+    "default": 4096
+  },
+  "commit_idle_seconds": {
+    "description": "Auto-commit after this many seconds of inactivity",
+    "type": "int",
+    "default": 1800
+  },
+  "ingest_attachments": {
+    "description": "Push images/files to OV resources for VLM indexing",
+    "type": "bool",
+    "default": false
+  },
+  "capture_tool_io": {
+    "description": "Capture LLM tool call inputs/outputs",
+    "type": "bool",
+    "default": true
+  },
+  "fanout_member_cache_ttl_seconds": {
+    "description": "TTL for cached group member lists (fanout mode)",
+    "type": "int",
+    "default": 3600
+  },
+  "backfill_on_first_seen": {
+    "description": "Pull historical messages when a venue is first seen",
+    "type": "bool",
+    "default": true
+  },
+  "backfill_max_messages": {
+    "description": "Max messages to backfill per venue",
+    "type": "int",
+    "default": 500
+  },
+  "backfill_max_age_days": {
+    "description": "Only backfill messages from the last N days",
+    "type": "int",
+    "default": 30
+  },
+  "backfill_batch_size": {
+    "description": "Messages per batch when writing backfill to OV",
+    "type": "int",
+    "default": 20
+  },
+  "backfill_throttle_ms": {
+    "description": "Delay between backfill batches (ms)",
+    "type": "int",
+    "default": 200
+  },
+  "bypass_patterns": {
+    "description": "Regex patterns to skip OV operations for matching venue IDs",
+    "type": "list",
+    "default": []
+  }
+}
