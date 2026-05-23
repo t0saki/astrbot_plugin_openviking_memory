@@ -13,6 +13,9 @@
     "ov_user_api_key": {
       "description": "User API key for global_user mode (use directly, no admin key needed)"
     },
+    "ov_agent_id": {
+      "description": "OV agent identifier sent via X-OpenViking-Agent header (empty to skip)"
+    },
     "ov_account_id": {
       "description": "OV account ID (leave empty to auto-parse from API key)"
     },

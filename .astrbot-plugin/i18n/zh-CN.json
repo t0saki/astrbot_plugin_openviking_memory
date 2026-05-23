@@ -13,6 +13,9 @@
     "ov_user_api_key": {
       "description": "普通 User API Key（global_user 模式下可直接使用，无需 Admin Key）"
     },
+    "ov_agent_id": {
+      "description": "OV Agent 标识（通过 X-OpenViking-Agent header 传递，留空则不传）"
+    },
     "ov_account_id": {
       "description": "OV Account ID（留空则从 API Key 自动解析）"
     },

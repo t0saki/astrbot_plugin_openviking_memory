@@ -15,6 +15,7 @@ _DEFAULTS: dict[str, Any] = {
     "ov_admin_api_key": "",
     "ov_user_api_key": "",
     "ov_account_id": "",
+    "ov_agent_id": "astrbot",
     "isolation_mode": "venue_user",
     "isolation_overrides": {},
     "global_user_id": "astrbot-global",

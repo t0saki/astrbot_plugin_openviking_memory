@@ -25,11 +25,13 @@ class OVClient:
         base_url: str,
         api_key: str = "",
         account_id: str = "",
+        agent_id: str = "",
         timeout: float = DEFAULT_TIMEOUT,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.account_id = account_id
+        self.agent_id = agent_id
         self._http = httpx.AsyncClient(timeout=timeout)
 
     def _headers(
@@ -45,6 +47,8 @@ class OVClient:
             h["X-OpenViking-Account"] = self.account_id
         if user_id:
             h["X-OpenViking-User"] = user_id
+        if self.agent_id:
+            h["X-OpenViking-Agent"] = self.agent_id
         return h
 
     async def close(self):

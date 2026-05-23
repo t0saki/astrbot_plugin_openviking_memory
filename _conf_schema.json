@@ -12,6 +12,11 @@
     "description": "User API key for global_user mode (skip admin user creation)",
     "type": "string"
   },
+  "ov_agent_id": {
+    "description": "OV agent identifier sent via X-OpenViking-Agent header (empty to skip)",
+    "type": "string",
+    "default": "astrbot"
+  },
   "ov_account_id": {
     "description": "OV account ID this plugin operates under",
     "type": "string"

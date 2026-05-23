@@ -64,6 +64,7 @@ class OpenVikingMemoryPlugin(Star):
             base_url=self.cfg.ov_base_url,
             api_key=effective_key,
             account_id=account_id,
+            agent_id=self.cfg.ov_agent_id,
         )
         import hashlib
 
