@@ -82,10 +82,13 @@ class OVClient:
         payload: dict[str, Any],
         api_key: str | None = None,
     ) -> bool:
+        import json as _json
+
+        body = _json.dumps(payload, ensure_ascii=False, default=str)
         r = await self._http.post(
             f"{self.base_url}/api/v1/sessions/{quote(session_id)}/messages",
             headers=self._headers(api_key=api_key),
-            json=payload,
+            content=body,
         )
         if r.status_code != 200:
             logger.warning("add_message %s failed: %d", session_id, r.status_code)

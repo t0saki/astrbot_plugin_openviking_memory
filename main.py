@@ -303,34 +303,34 @@ class OpenVikingMemoryPlugin(Star):
     # -- hook: tool I/O capture (requires AstrBot >= 4.23.1) --------------------
 
     @filter.on_using_llm_tool()
-    async def on_tool_call(
-        self, event: AstrMessageEvent, tool_name: str = "", tool_input: Any = None, **kwargs
-    ):
+    async def on_tool_call(self, event: AstrMessageEvent, *args, **kwargs):
         if not self.cfg.capture_tool_io:
             return
         info = self._extract_event_info(event)
         venue_id = derive_venue(info["platform"], info["group_id"], info["sender_id"])
         if self.cfg.is_bypassed(venue_id):
             return
+        t_name = str(kwargs.get("tool_name", args[0] if args else ""))
+        t_input = kwargs.get("tool_input", args[1] if len(args) > 1 else None)
         api_key = self._venue_keys.get(venue_id, "")
         session_id = derive_session_id(venue_id)
-        parts = [tool_call_part(tool_name, tool_input)]
+        parts = [tool_call_part(t_name, t_input)]
         payload = build_message("assistant", parts)
         await self.ov.add_message(session_id, payload, api_key=api_key)
 
     @filter.on_llm_tool_respond()
-    async def on_tool_respond(
-        self, event: AstrMessageEvent, tool_name: str = "", tool_output: Any = None, **kwargs
-    ):
+    async def on_tool_respond(self, event: AstrMessageEvent, *args, **kwargs):
         if not self.cfg.capture_tool_io:
             return
         info = self._extract_event_info(event)
         venue_id = derive_venue(info["platform"], info["group_id"], info["sender_id"])
         if self.cfg.is_bypassed(venue_id):
             return
+        t_name = str(kwargs.get("tool_name", args[0] if args else ""))
+        t_output = kwargs.get("tool_output", args[-1] if args else None)
         api_key = self._venue_keys.get(venue_id, "")
         session_id = derive_session_id(venue_id)
-        parts = [tool_result_part(tool_name, tool_output)]
+        parts = [tool_result_part(t_name, t_output)]
         payload = build_message("user", parts)
         await self.ov.add_message(session_id, payload, api_key=api_key)
 
@@ -345,7 +345,7 @@ class OpenVikingMemoryPlugin(Star):
 
     # -- commands -------------------------------------------------------------
 
-    @filter.command("ov_status")
+    @filter.command("ov_status", alias={"ov-status"})
     async def cmd_status(self, event: AstrMessageEvent):
         info = self._extract_event_info(event)
         venue_id = derive_venue(info["platform"], info["group_id"], info["sender_id"])
@@ -368,7 +368,7 @@ class OpenVikingMemoryPlugin(Star):
         yield event.plain_result("\n".join(lines))
 
     @filter.permission_type(PermissionType.ADMIN)
-    @filter.command("ov_backfill")
+    @filter.command("ov_backfill", alias={"ov-backfill"})
     async def cmd_backfill(self, event: AstrMessageEvent):
         info = self._extract_event_info(event)
         venue_id = derive_venue(info["platform"], info["group_id"], info["sender_id"])
