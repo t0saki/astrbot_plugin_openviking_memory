@@ -1,0 +1,74 @@
+{
+  "metadata": {
+    "display_name": "OpenViking 记忆插件",
+    "desc": "为 AstrBot 接入 OpenViking 长期记忆 — 自动捕获对话、语义召回、可配置的跨群记忆隔离。"
+  },
+  "config": {
+    "ov_base_url": {
+      "description": "OpenViking 服务端地址"
+    },
+    "ov_admin_api_key": {
+      "description": "Admin API Key（仅在首次创建 venue user 时使用）"
+    },
+    "ov_account_id": {
+      "description": "OV Account ID（留空则从 API Key 自动解析）"
+    },
+    "isolation_mode": {
+      "description": "记忆隔离模式：venue_user（每群/私聊独立，默认）| venue_user_fanout（跨群共享）| global_user（全局共享）"
+    },
+    "isolation_overrides": {
+      "description": "按群号覆盖隔离模式（JSON 格式），例如 {\"123456\": \"venue_user_fanout\"}"
+    },
+    "global_user_id": {
+      "description": "global_user 模式下使用的 OV 用户 ID"
+    },
+    "auto_recall_enabled": {
+      "description": "每次 LLM 请求前自动召回记忆"
+    },
+    "recall_limit": {
+      "description": "最多召回条数"
+    },
+    "recall_min_score": {
+      "description": "召回最低语义匹配分数"
+    },
+    "recall_token_budget": {
+      "description": "注入上下文的 token 预算"
+    },
+    "commit_message_threshold": {
+      "description": "累积 N 条消息后自动提交"
+    },
+    "commit_token_threshold": {
+      "description": "累积 token 超过此值后自动提交"
+    },
+    "commit_idle_seconds": {
+      "description": "空闲 N 秒后自动提交"
+    },
+    "ingest_attachments": {
+      "description": "将图片/文件推送至 OV 资源库（需配置 VLM）"
+    },
+    "capture_tool_io": {
+      "description": "捕获 LLM 工具调用的输入/输出"
+    },
+    "fanout_member_cache_ttl_seconds": {
+      "description": "群成员列表缓存时间（秒，fanout 模式用）"
+    },
+    "backfill_on_first_seen": {
+      "description": "首次接入群聊时拉取历史消息"
+    },
+    "backfill_max_messages": {
+      "description": "每群最多拉取历史消息条数"
+    },
+    "backfill_max_age_days": {
+      "description": "只拉取最近 N 天的历史消息"
+    },
+    "backfill_batch_size": {
+      "description": "历史消息写入 OV 的批量大小"
+    },
+    "backfill_throttle_ms": {
+      "description": "历史消息批次之间的延迟（毫秒）"
+    },
+    "bypass_patterns": {
+      "description": "正则表达式列表，匹配的 venue ID 将跳过 OV 操作"
+    }
+  }
+}

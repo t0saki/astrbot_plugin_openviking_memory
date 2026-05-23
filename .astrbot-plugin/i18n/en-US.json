@@ -1,0 +1,74 @@
+{
+  "metadata": {
+    "display_name": "OpenViking Memory Plugin",
+    "desc": "OpenViking long-term memory for AstrBot — auto-capture conversations, semantic recall, and cross-venue memory isolation."
+  },
+  "config": {
+    "ov_base_url": {
+      "description": "OpenViking server URL"
+    },
+    "ov_admin_api_key": {
+      "description": "Admin API key (only used to create venue users on first encounter)"
+    },
+    "ov_account_id": {
+      "description": "OV account ID (leave empty to auto-parse from API key)"
+    },
+    "isolation_mode": {
+      "description": "Memory isolation: venue_user (per-group/DM, default) | venue_user_fanout (cross-venue sharing) | global_user (single user)"
+    },
+    "isolation_overrides": {
+      "description": "Per-group isolation mode overrides as JSON, e.g. {\"123456\": \"venue_user_fanout\"}"
+    },
+    "global_user_id": {
+      "description": "OV user ID used in global_user mode"
+    },
+    "auto_recall_enabled": {
+      "description": "Auto-recall memories on every LLM request"
+    },
+    "recall_limit": {
+      "description": "Max number of memory entries to recall"
+    },
+    "recall_min_score": {
+      "description": "Minimum semantic score threshold for recall"
+    },
+    "recall_token_budget": {
+      "description": "Max tokens for injected recall context"
+    },
+    "commit_message_threshold": {
+      "description": "Auto-commit after this many pending messages"
+    },
+    "commit_token_threshold": {
+      "description": "Auto-commit when pending tokens exceed this"
+    },
+    "commit_idle_seconds": {
+      "description": "Auto-commit after this many seconds of inactivity"
+    },
+    "ingest_attachments": {
+      "description": "Push images/files to OV resources for VLM indexing"
+    },
+    "capture_tool_io": {
+      "description": "Capture LLM tool call inputs/outputs"
+    },
+    "fanout_member_cache_ttl_seconds": {
+      "description": "TTL for cached group member lists (fanout mode)"
+    },
+    "backfill_on_first_seen": {
+      "description": "Pull historical messages when a venue is first seen"
+    },
+    "backfill_max_messages": {
+      "description": "Max messages to backfill per venue"
+    },
+    "backfill_max_age_days": {
+      "description": "Only backfill messages from the last N days"
+    },
+    "backfill_batch_size": {
+      "description": "Messages per batch when writing backfill to OV"
+    },
+    "backfill_throttle_ms": {
+      "description": "Delay between backfill batches (ms)"
+    },
+    "bypass_patterns": {
+      "description": "Regex patterns to skip OV operations for matching venue IDs"
+    }
+  }
+}
