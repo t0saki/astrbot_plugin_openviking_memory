@@ -65,9 +65,9 @@ When a user sends a message in group G, it's also written to all other groups/DM
 
 Trade-off: each message results in N writes (N = user's venue count). Small-scale deployments can handle this easily.
 
-## Optional: Adding OV MCP tools
+## Recommended: Adding OV MCP tools
 
-To give the LLM direct access to all OpenViking MCP tools (search, remember, read, list, etc.), add an MCP server in AstrBot WebUI → Plugins → MCP:
+We strongly recommend adding the OpenViking MCP server in AstrBot WebUI → Plugins → MCP, so the LLM can proactively use tools like search, remember, read, and list:
 
 ```json
 {
@@ -83,7 +83,7 @@ To give the LLM direct access to all OpenViking MCP tools (search, remember, rea
 
 Replace `url` and `Authorization` with your actual OV server address and API key (same as the plugin config).
 
-This is optional — the plugin's auto-recall/capture works without it.
+> Due to AstrBot plugin architecture limitations, the plugin cannot register MCP servers automatically — manual setup is required. Without it, the plugin's auto-recall/capture still works, but the LLM won't be able to proactively search or write memories.
 
 ## Commands
 

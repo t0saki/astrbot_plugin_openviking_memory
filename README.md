@@ -15,7 +15,7 @@
 ### 前置条件
 
 - AstrBot >= 4.23.1
-- OpenViking 服务端已运行并可访问（部署方式参考 [OpenViking 文档](https://github.com/volcengine/OpenViking)）
+- OpenViking 服务端已运行并可访问（部署方式参考 [OpenViking 文档](https://docs.openviking.ai)）
 - 拥有 Admin API key（用于自动创建 venue user）
 
 ## 功能概览
@@ -71,9 +71,9 @@
 
 代价：每条消息产生 N 次写入（N = 用户所在 venue 数）。小规模部署完全可以承受。
 
-## 可选：添加 OV MCP 工具
+## 推荐：添加 OV MCP 工具
 
-如果希望 LLM 能直接调用 OpenViking 的全部 MCP 工具（search、remember、read、list 等），可在 AstrBot WebUI → 插件 → MCP 页面手动添加：
+强烈建议在 AstrBot WebUI → 插件 → MCP 页面添加 OpenViking MCP 服务，让 LLM 能主动调用 search、remember、read、list 等工具：
 
 ```json
 {
@@ -89,7 +89,7 @@
 
 将 `url` 和 `Authorization` 替换为实际的 OV 服务端地址和 API key（与插件配置中填写的一致）。
 
-这是可选配置——不添加也不影响插件的自动召回/捕获功能。
+> 由于 AstrBot 插件架构限制，插件无法自动注册 MCP 服务，需手动添加。不添加不影响插件的自动召回/捕获功能，但 LLM 将无法主动发起记忆搜索或写入。
 
 ## 命令
 
