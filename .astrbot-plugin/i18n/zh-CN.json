@@ -10,6 +10,9 @@
     "ov_admin_api_key": {
       "description": "Admin API Key（仅在首次创建 venue user 时使用）"
     },
+    "ov_user_api_key": {
+      "description": "普通 User API Key（global_user 模式下可直接使用，无需 Admin Key）"
+    },
     "ov_account_id": {
       "description": "OV Account ID（留空则从 API Key 自动解析）"
     },

@@ -16,7 +16,7 @@
 
 - AstrBot >= 4.23.1
 - OpenViking 服务端已运行并可访问（部署方式参考 [OpenViking 文档](https://docs.openviking.ai)）
-- 拥有 Admin API key（用于自动创建 venue user）
+- 拥有 Admin API key（用于自动创建 venue user）或 User API key（`global_user` 模式）
 
 ## 功能概览
 
@@ -39,8 +39,9 @@
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
 | `ov_base_url` | `http://localhost:1933` | OpenViking 服务端地址 |
-| `ov_admin_api_key` | *（必填）* | Admin API key，仅用于首次创建 venue user |
-| `ov_account_id` | *（必填）* | OV account ID |
+| `ov_admin_api_key` | | Admin API key，用于自动创建 venue user（`global_user` 模式下可用 `ov_user_api_key` 代替） |
+| `ov_user_api_key` | | 普通 User API key，`global_user` 模式下直接使用，无需 Admin key |
+| `ov_account_id` | | OV account ID（留空从 API key 自动解析） |
 | `isolation_mode` | `venue_user` | 隔离模式，见下方说明 |
 | `isolation_overrides` | `{}` | 按群号覆盖隔离模式，如 `{"123456": "venue_user_fanout"}` |
 | `auto_recall_enabled` | `true` | 是否自动召回 |

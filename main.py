@@ -56,12 +56,13 @@ class OpenVikingMemoryPlugin(Star):
         self.cfg = PluginConfig(raw_config)
 
         account_id = self.cfg.ov_account_id
-        if not account_id and self.cfg.ov_admin_api_key:
-            account_id = _parse_account_from_key(self.cfg.ov_admin_api_key)
+        effective_key = self.cfg.ov_admin_api_key or self.cfg.ov_user_api_key
+        if not account_id and effective_key:
+            account_id = _parse_account_from_key(effective_key)
 
         self.ov = OVClient(
             base_url=self.cfg.ov_base_url,
-            api_key=self.cfg.ov_admin_api_key,
+            api_key=effective_key,
             account_id=account_id,
         )
         import hashlib
@@ -94,6 +95,11 @@ class OpenVikingMemoryPlugin(Star):
 
     async def _ensure_venue_user(self, venue_id: str, ov_user_id: str):
         if venue_id in self._venue_auth:
+            return
+
+        if self.cfg.ov_user_api_key and self.cfg.isolation_mode == "global_user":
+            self._venue_auth[venue_id] = (self.cfg.ov_user_api_key, "")
+            self.logger.debug("[OV] global_user mode: using user key directly")
             return
 
         cached_key = await self._kv_get(f"{self._kv_prefix}key::{venue_id}")
@@ -393,7 +399,9 @@ class OpenVikingMemoryPlugin(Star):
             self.cfg, info["platform"], info["group_id"], info["sender_id"]
         )
         api_key, fallback_uid = self._venue_auth.get(venue_id, ("", ""))
-        if api_key:
+        if api_key and self.cfg.ov_user_api_key and mode == "global_user":
+            key_status = "user key (global)"
+        elif api_key:
             key_status = "per-venue key"
         elif fallback_uid:
             key_status = f"admin fallback (user={fallback_uid})"

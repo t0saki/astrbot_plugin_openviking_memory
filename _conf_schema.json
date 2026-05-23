@@ -8,6 +8,10 @@
     "description": "Admin API key (only used to create venue users on first encounter)",
     "type": "string"
   },
+  "ov_user_api_key": {
+    "description": "User API key for global_user mode (skip admin user creation)",
+    "type": "string"
+  },
   "ov_account_id": {
     "description": "OV account ID this plugin operates under",
     "type": "string"

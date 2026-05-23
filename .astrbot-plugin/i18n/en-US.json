@@ -10,6 +10,9 @@
     "ov_admin_api_key": {
       "description": "Admin API key (only used to create venue users on first encounter)"
     },
+    "ov_user_api_key": {
+      "description": "User API key for global_user mode (use directly, no admin key needed)"
+    },
     "ov_account_id": {
       "description": "OV account ID (leave empty to auto-parse from API key)"
     },

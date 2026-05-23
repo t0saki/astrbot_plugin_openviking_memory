@@ -33,8 +33,9 @@ All fields are configured via AstrBot WebUI after installation.
 | Field | Default | Description |
 |-------|---------|-------------|
 | `ov_base_url` | `http://localhost:1933` | OpenViking server URL |
-| `ov_admin_api_key` | *(required)* | Admin API key for creating venue users |
-| `ov_account_id` | *(required)* | OV account ID |
+| `ov_admin_api_key` | | Admin API key for creating venue users (`global_user` mode can use `ov_user_api_key` instead) |
+| `ov_user_api_key` | | User API key for `global_user` mode (use directly, no admin key needed) |
+| `ov_account_id` | | OV account ID (auto-parsed from API key if empty) |
 | `isolation_mode` | `venue_user` | See isolation modes below |
 | `isolation_overrides` | `{}` | Per-group overrides `{"group_id": "mode"}` |
 | `auto_recall_enabled` | `true` | Auto-recall on every LLM request |
@@ -96,7 +97,7 @@ Replace `url` and `Authorization` with your actual OV server address and API key
 
 - AstrBot >= 4.23.1 (for tool I/O capture hooks; core features work on >= 4.9.2)
 - OpenViking server running and accessible
-- Admin API key with permission to create users
+- Admin API key (for creating venue users) or User API key (`global_user` mode)
 
 ## License
 
