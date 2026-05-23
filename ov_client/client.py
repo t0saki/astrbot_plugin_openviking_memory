@@ -68,17 +68,21 @@ class OVClient:
         self,
         user_id: str,
         admin_api_key: str,
-    ) -> dict[str, Any] | None:
-        r = await self._http.post(
-            f"{self.base_url}/api/v1/admin/accounts/{quote(self.account_id)}/users",
-            headers=self._headers(api_key=admin_api_key),
-            json={"user_id": user_id, "role": "user"},
-        )
+    ) -> tuple[dict[str, Any] | None, str]:
+        """Create OV user. Returns (result_dict, error_msg). error_msg is "" on success."""
+        url = f"{self.base_url}/api/v1/admin/accounts/{quote(self.account_id)}/users"
+        try:
+            r = await self._http.post(
+                url,
+                headers=self._headers(api_key=admin_api_key),
+                json={"user_id": user_id, "role": "user"},
+            )
+        except Exception as e:
+            return None, f"HTTP error: {e}"
         if r.status_code == 200:
             body = r.json()
-            return body.get("result", body)
-        logger.warning("create_user %s failed: %d %s", user_id, r.status_code, r.text[:200])
-        return None
+            return body.get("result", body), ""
+        return None, f"HTTP {r.status_code}: {r.text[:300]}"
 
     # -- sessions -------------------------------------------------------------
 

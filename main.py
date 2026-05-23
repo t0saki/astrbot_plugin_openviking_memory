@@ -88,23 +88,35 @@ class OpenVikingMemoryPlugin(Star):
         cached_key = await self._kv_get(f"ov_user_key::{venue_id}")
         if cached_key:
             self._venue_auth[venue_id] = (cached_key, "")
+            logger.info("[OV] venue %s: loaded cached key", venue_id)
             return
 
         if not self.cfg.ov_admin_api_key:
             self._venue_auth[venue_id] = ("", "")
+            logger.warning("[OV] no admin key configured, no user isolation")
             return
 
-        result = await self.ov.create_user(ov_user_id, self.cfg.ov_admin_api_key)
+        logger.info(
+            "[OV] creating user %s (account=%s, url=%s)",
+            ov_user_id,
+            self.ov.account_id,
+            self.cfg.ov_base_url,
+        )
+        result, err = await self.ov.create_user(ov_user_id, self.cfg.ov_admin_api_key)
         if result and "user_key" in result:
             key = result["user_key"]
             await self._kv_put(f"ov_user_key::{venue_id}", key)
             self._venue_auth[venue_id] = (key, "")
-            logger.info("created OV user %s for venue %s", ov_user_id, venue_id)
+            logger.info("[OV] created user %s for venue %s", ov_user_id, venue_id)
             return
 
-        # 409 or other failure — user exists but key lost; fallback to admin + header
+        # 409 or other failure — fallback to admin key + user header
         self._venue_auth[venue_id] = ("", ov_user_id)
-        logger.info("venue %s: admin key + X-OpenViking-User fallback", ov_user_id)
+        logger.warning(
+            "[OV] create_user %s failed: %s — using admin fallback",
+            ov_user_id,
+            err,
+        )
 
     def _auth(self, venue_id: str) -> dict[str, str | None]:
         """Return kwargs for OVClient calls: api_key and/or user_id."""
