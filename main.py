@@ -96,26 +96,24 @@ class OpenVikingMemoryPlugin(Star):
             logger.warning("[OV] no admin key configured, no user isolation")
             return
 
-        logger.info(
-            "[OV] creating user %s (account=%s, url=%s)",
-            ov_user_id,
-            self.ov.account_id,
-            self.cfg.ov_base_url,
+        print(
+            f"[OV DEBUG] creating user {ov_user_id} "
+            f"(account={self.ov.account_id}, url={self.cfg.ov_base_url})",
+            flush=True,
         )
         result, err = await self.ov.create_user(ov_user_id, self.cfg.ov_admin_api_key)
+        print(f"[OV DEBUG] create_user result={result}, err={err!r}", flush=True)
         if result and "user_key" in result:
             key = result["user_key"]
             await self._kv_put(f"ov_user_key::{venue_id}", key)
             self._venue_auth[venue_id] = (key, "")
-            logger.info("[OV] created user %s for venue %s", ov_user_id, venue_id)
+            print(f"[OV DEBUG] created user {ov_user_id}, key cached", flush=True)
             return
 
-        # 409 or other failure — fallback to admin key + user header
         self._venue_auth[venue_id] = ("", ov_user_id)
-        logger.warning(
-            "[OV] create_user %s failed: %s — using admin fallback",
-            ov_user_id,
-            err,
+        print(
+            f"[OV DEBUG] create_user {ov_user_id} failed: {err} — admin fallback",
+            flush=True,
         )
 
     def _auth(self, venue_id: str) -> dict[str, str | None]:
@@ -161,6 +159,7 @@ class OpenVikingMemoryPlugin(Star):
     @filter.event_message_type(EventMessageType.ALL)
     async def on_user_message(self, event: AstrMessageEvent):
         info = self._extract_event_info(event)
+        print(f"[OV DEBUG] on_user_message fired: text={info['text'][:50]!r}", flush=True)
         if not info["text"].strip():
             return
 
