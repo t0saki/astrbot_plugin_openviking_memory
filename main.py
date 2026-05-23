@@ -68,9 +68,18 @@ class OpenVikingMemoryPlugin(Star):
             kv_put=self._kv_put,
         )
         # venue_id -> (api_key, fallback_user_id)
-        # api_key set = use it directly (key encodes identity)
-        # api_key empty + user_id set = use admin key + X-OpenViking-User header
         self._venue_auth: dict[str, tuple[str, str]] = {}
+        self._diag: list[str] = []
+
+    def _log(self, msg: str):
+        """Append to in-memory diagnostic log (visible via /ov_status)."""
+        import datetime
+
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
+        entry = f"[{ts}] {msg}"
+        self._diag.append(entry)
+        if len(self._diag) > 30:
+            self._diag = self._diag[-30:]
 
     async def _kv_get(self, key: str, default: Any = None) -> Any:
         return await self.get_kv_data(key, default)
@@ -88,33 +97,25 @@ class OpenVikingMemoryPlugin(Star):
         cached_key = await self._kv_get(f"ov_user_key::{venue_id}")
         if cached_key:
             self._venue_auth[venue_id] = (cached_key, "")
-            logger.info("[OV] venue %s: loaded cached key", venue_id)
+            self._log(f"venue {venue_id}: loaded cached key")
             return
 
         if not self.cfg.ov_admin_api_key:
             self._venue_auth[venue_id] = ("", "")
-            logger.warning("[OV] no admin key configured, no user isolation")
+            self._log("no admin key configured")
             return
 
-        print(
-            f"[OV DEBUG] creating user {ov_user_id} "
-            f"(account={self.ov.account_id}, url={self.cfg.ov_base_url})",
-            flush=True,
-        )
+        self._log(f"creating user {ov_user_id} (account={self.ov.account_id})")
         result, err = await self.ov.create_user(ov_user_id, self.cfg.ov_admin_api_key)
-        print(f"[OV DEBUG] create_user result={result}, err={err!r}", flush=True)
         if result and "user_key" in result:
             key = result["user_key"]
             await self._kv_put(f"ov_user_key::{venue_id}", key)
             self._venue_auth[venue_id] = (key, "")
-            print(f"[OV DEBUG] created user {ov_user_id}, key cached", flush=True)
+            self._log(f"created user {ov_user_id} OK")
             return
 
         self._venue_auth[venue_id] = ("", ov_user_id)
-        print(
-            f"[OV DEBUG] create_user {ov_user_id} failed: {err} — admin fallback",
-            flush=True,
-        )
+        self._log(f"create_user {ov_user_id} FAILED: {err}")
 
     def _auth(self, venue_id: str) -> dict[str, str | None]:
         """Return kwargs for OVClient calls: api_key and/or user_id."""
@@ -159,7 +160,7 @@ class OpenVikingMemoryPlugin(Star):
     @filter.event_message_type(EventMessageType.ALL)
     async def on_user_message(self, event: AstrMessageEvent):
         info = self._extract_event_info(event)
-        print(f"[OV DEBUG] on_user_message fired: text={info['text'][:50]!r}", flush=True)
+        self._log(f"msg from {info['sender_id']}: {info['text'][:40]}")
         if not info["text"].strip():
             return
 
@@ -414,7 +415,13 @@ class OpenVikingMemoryPlugin(Star):
             f"Pending: {sched['pending_messages']} msgs / ~{sched['pending_tokens']} tokens",
             f"Last commit: {_fmt_ts(sched['last_commit_ts'])}",
             f"Backfill: {bf_status}",
+            f"Venues seen: {len(self._venue_auth)}",
         ]
+        if self._diag:
+            lines.append("--- Recent events ---")
+            lines.extend(self._diag[-10:])
+        else:
+            lines.append("--- No events logged yet ---")
         yield event.plain_result("\n".join(lines))
 
     @filter.permission_type(PermissionType.ADMIN)
