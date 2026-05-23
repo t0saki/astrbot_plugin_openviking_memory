@@ -67,11 +67,21 @@ Trade-off: each message results in N writes (N = user's venue count). Small-scal
 
 ## Optional: Adding OV MCP tools
 
-To give the LLM direct access to all OpenViking MCP tools (search, remember, read, list, etc.), add OV as an MCP server in AstrBot's WebUI:
+To give the LLM direct access to all OpenViking MCP tools (search, remember, read, list, etc.), add an MCP server in AstrBot WebUI → Plugins → MCP:
 
-- **Type**: HTTP
-- **URL**: `{ov_base_url}/mcp` (e.g. `http://localhost:1933/mcp`)
-- **Authorization**: Bearer `{ov_admin_api_key}`
+```json
+{
+  "transport": "streamable_http",
+  "url": "http://localhost:1933/mcp",
+  "headers": {
+    "Authorization": "Bearer <your_ov_admin_api_key>"
+  },
+  "timeout": 5,
+  "sse_read_timeout": 300
+}
+```
+
+Replace `url` and `Authorization` with your actual OV server address and API key (same as the plugin config).
 
 This is optional — the plugin's auto-recall/capture works without it.
 

@@ -73,11 +73,21 @@
 
 ## 可选：添加 OV MCP 工具
 
-如果希望 LLM 能直接调用 OpenViking 的全部 MCP 工具（search、remember、read、list 等），可在 AstrBot WebUI 中手动添加一个 MCP 服务器：
+如果希望 LLM 能直接调用 OpenViking 的全部 MCP 工具（search、remember、read、list 等），可在 AstrBot WebUI → 插件 → MCP 页面手动添加：
 
-- **类型**：HTTP
-- **URL**：`{ov_base_url}/mcp`（例如 `http://localhost:1933/mcp`）
-- **Authorization**：Bearer `{ov_admin_api_key}`
+```json
+{
+  "transport": "streamable_http",
+  "url": "http://localhost:1933/mcp",
+  "headers": {
+    "Authorization": "Bearer <你的 ov_admin_api_key>"
+  },
+  "timeout": 5,
+  "sse_read_timeout": 300
+}
+```
+
+将 `url` 和 `Authorization` 替换为实际的 OV 服务端地址和 API key（与插件配置中填写的一致）。
 
 这是可选配置——不添加也不影响插件的自动召回/捕获功能。
 
