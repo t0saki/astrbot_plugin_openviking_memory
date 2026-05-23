@@ -100,7 +100,7 @@ async def _resolve_content(
     abstract = (item.get("abstract") or item.get("overview") or "").strip()
 
     if cfg.recall_token_budget > 500 and uri:
-        full = await client.read_content(uri, api_key=api_key)
+        full = await client.read_content(uri, api_key=api_key, user_id=user_id)
         if full and full.strip():
             return full.strip()
 

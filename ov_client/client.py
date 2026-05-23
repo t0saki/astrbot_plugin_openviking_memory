@@ -169,11 +169,12 @@ class OVClient:
         self,
         uri: str,
         api_key: str | None = None,
+        user_id: str | None = None,
     ) -> str | None:
         r = await self._http.get(
             f"{self.base_url}/api/v1/content/read",
             params={"uri": uri},
-            headers=self._headers(api_key=api_key),
+            headers=self._headers(api_key=api_key, user_id=user_id),
         )
         if r.status_code == 200:
             result = r.json().get("result")
@@ -187,11 +188,12 @@ class OVClient:
         path: str,
         to_uri: str,
         api_key: str | None = None,
+        user_id: str | None = None,
         wait: bool = False,
     ) -> dict[str, Any] | None:
         r = await self._http.post(
             f"{self.base_url}/api/v1/resources",
-            headers=self._headers(api_key=api_key),
+            headers=self._headers(api_key=api_key, user_id=user_id),
             json={"path": path, "to": to_uri, "wait": wait},
         )
         if r.status_code == 200:

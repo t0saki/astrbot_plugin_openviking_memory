@@ -317,6 +317,8 @@ class OpenVikingMemoryPlugin(Star):
                 event=event,
             )
             for target_venue_id in targets:
+                target_ov_uid = f"astrbot-{target_venue_id}"
+                await self._ensure_venue_user(target_venue_id, target_ov_uid)
                 target_auth = self._auth(target_venue_id)
                 target_session_id = derive_session_id(target_venue_id)
                 fo_parts = [fanout_text_part(reply_text, venue_id)]
