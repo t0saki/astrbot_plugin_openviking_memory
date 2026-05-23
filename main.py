@@ -45,9 +45,15 @@ class OpenVikingMemoryPlugin(Star):
         super().__init__(context)
         raw_config = dict(config) if config else {}
         self.cfg = PluginConfig(raw_config)
+
+        account_id = self.cfg.ov_account_id
+        if not account_id and self.cfg.ov_admin_api_key:
+            account_id = _parse_account_from_key(self.cfg.ov_admin_api_key)
+
         self.ov = OVClient(
             base_url=self.cfg.ov_base_url,
-            account_id=self.cfg.ov_account_id,
+            api_key=self.cfg.ov_admin_api_key,
+            account_id=account_id,
         )
         self.scheduler = CommitScheduler(self.ov, self.cfg)
         self.fanout = FanoutManager(
@@ -116,9 +122,15 @@ class OpenVikingMemoryPlugin(Star):
     async def on_loaded(self):
         ok = await self.ov.health()
         if ok:
-            logger.info("OpenViking server reachable at %s", self.cfg.ov_base_url)
+            logger.info(
+                "OpenViking server reachable at %s (account=%s)",
+                self.cfg.ov_base_url,
+                self.ov.account_id or "(not set)",
+            )
         else:
             logger.warning("OpenViking server NOT reachable at %s", self.cfg.ov_base_url)
+        if not self.ov.account_id:
+            logger.warning("account_id is empty — user isolation will NOT work")
 
     # -- hook: capture user messages ------------------------------------------
 
@@ -356,9 +368,17 @@ class OpenVikingMemoryPlugin(Star):
         bf_status = await self.backfill.get_status(venue_id)
         mode = get_effective_mode(self.cfg, info["group_id"])
 
+        ov_user_id = derive_ov_user_id(
+            self.cfg, info["platform"], info["group_id"], info["sender_id"]
+        )
+        venue_key = self._venue_keys.get(venue_id, "")
+
         lines = [
             "OpenViking Memory Plugin v0.1.0",
             f"Server: {self.cfg.ov_base_url} ({'OK' if healthy else 'UNREACHABLE'})",
+            f"Account: {self.ov.account_id or '(not set)'}",
+            f"OV User: {ov_user_id}",
+            f"User Key: {'set' if venue_key else 'not created'}",
             f"Isolation: {mode}",
             f"Venue: {venue_id}",
             f"Pending: {sched['pending_messages']} msgs / ~{sched['pending_tokens']} tokens",
@@ -402,3 +422,18 @@ def _fmt_ts(ts: float) -> str:
     import datetime
 
     return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_account_from_key(api_key: str) -> str:
+    """Extract account_id from OV API key format: base64(account).base64(user).hash"""
+    import base64
+
+    parts = api_key.split(".")
+    if len(parts) >= 2:
+        try:
+            account = base64.b64decode(parts[0] + "==").decode("utf-8")
+            if account:
+                return account
+        except Exception:
+            pass
+    return ""
