@@ -83,17 +83,6 @@ class OpenVikingMemoryPlugin(Star):
             kv_prefix=self._kv_prefix,
         )
         self._venue_auth: dict[str, tuple[str, str]] = {}
-        self._diag: list[str] = []
-
-    def _log(self, msg: str):
-        """Append to in-memory diagnostic log (visible via /ov_status)."""
-        import datetime
-
-        ts = datetime.datetime.now().strftime("%H:%M:%S")
-        entry = f"[{ts}] {msg}"
-        self._diag.append(entry)
-        if len(self._diag) > 30:
-            self._diag = self._diag[-30:]
 
     async def _kv_get(self, key: str, default: Any = None) -> Any:
         return await self.get_kv_data(key, default)
@@ -104,40 +93,35 @@ class OpenVikingMemoryPlugin(Star):
     # -- auth helpers ---------------------------------------------------------
 
     async def _ensure_venue_user(self, venue_id: str, ov_user_id: str):
-        """Ensure OV user exists for this venue. Caches auth pair."""
         if venue_id in self._venue_auth:
             return
 
         cached_key = await self._kv_get(f"{self._kv_prefix}key::{venue_id}")
         if cached_key:
             self._venue_auth[venue_id] = (cached_key, "")
-            self._log(f"venue {venue_id}: loaded cached key")
+            self.logger.debug("[OV] venue %s: loaded cached key", venue_id)
             return
 
         if not self.cfg.ov_admin_api_key:
             self._venue_auth[venue_id] = ("", "")
-            self._log("no admin key configured")
+            self.logger.warning("[OV] no admin key — no user isolation")
             return
 
-        self._log(f"creating user {ov_user_id} (account={self.ov.account_id})")
+        self.logger.info("[OV] creating user %s (account=%s)", ov_user_id, self.ov.account_id)
         result, err = await self.ov.create_user(ov_user_id, self.cfg.ov_admin_api_key)
         if result and "user_key" in result:
             key = result["user_key"]
             await self._kv_put(f"{self._kv_prefix}key::{venue_id}", key)
             self._venue_auth[venue_id] = (key, "")
-            self._log(f"created user {ov_user_id} OK")
+            self.logger.info("[OV] created user %s OK", ov_user_id)
             return
 
         self._venue_auth[venue_id] = ("", ov_user_id)
-        self._log(f"create_user {ov_user_id} FAILED: {err}")
+        self.logger.warning("[OV] create_user %s failed: %s — admin fallback", ov_user_id, err)
 
     def _auth(self, venue_id: str) -> dict[str, str | None]:
-        """Return kwargs for OVClient calls: api_key and/or user_id."""
         api_key, user_id = self._venue_auth.get(venue_id, ("", ""))
-        return {
-            "api_key": api_key or None,
-            "user_id": user_id or None,
-        }
+        return {"api_key": api_key or None, "user_id": user_id or None}
 
     def _extract_event_info(self, event: AstrMessageEvent) -> dict:
         platform = getattr(event, "get_platform_name", lambda: "unknown")()
@@ -160,22 +144,18 @@ class OpenVikingMemoryPlugin(Star):
         ok = await self.ov.health()
         if ok:
             self.logger.info(
-                "OV server reachable at %s (account=%s)",
+                "[OV] server reachable at %s (account=%s)",
                 self.cfg.ov_base_url,
                 self.ov.account_id or "(not set)",
             )
         else:
-            self.logger.warning("OV server NOT reachable at %s", self.cfg.ov_base_url)
-        if not self.ov.account_id:
-            self.logger.warning("account_id is empty — user isolation will NOT work")
+            self.logger.warning("[OV] server NOT reachable at %s", self.cfg.ov_base_url)
 
     # -- hook: capture user messages ------------------------------------------
 
     @filter.event_message_type(EventMessageType.ALL)
     async def on_user_message(self, event: AstrMessageEvent):
         info = self._extract_event_info(event)
-        self.logger.info("[OV] msg from %s in %s", info["sender_id"], info["group_id"] or "DM")
-        self._log(f"msg from {info['sender_id']}: {info['text'][:40]}")
         if not info["text"].strip():
             return
 
@@ -198,11 +178,12 @@ class OpenVikingMemoryPlugin(Star):
             self._append_media_placeholders(msg_chain, parts)
 
         payload = build_message("user", parts)
-        await self.ov.add_message(session_id, payload, **auth)
-        self.scheduler.set_auth(session_id, auth)
-
-        token_est = estimate_tokens(info["text"])
-        await self.scheduler.record_message(session_id, token_est)
+        ok = await self.ov.add_message(session_id, payload, **auth)
+        if ok:
+            self.scheduler.set_auth(session_id, auth)
+            await self.scheduler.record_message(session_id, estimate_tokens(info["text"]))
+        else:
+            self.logger.warning("[OV] add_message failed for %s", session_id)
 
         await self.fanout.record_observation(info["platform"], info["sender_id"], venue_id)
 
@@ -352,7 +333,7 @@ class OpenVikingMemoryPlugin(Star):
                 fo_payload = build_message("assistant", fo_parts)
                 await self.ov.add_message(target_session_id, fo_payload, **target_auth)
 
-    # -- hook: tool I/O capture (requires AstrBot >= 4.23.1) --------------------
+    # -- hook: tool I/O capture -----------------------------------------------
 
     @filter.on_using_llm_tool()
     async def on_tool_call(self, event: AstrMessageEvent, *args, **kwargs):
@@ -430,16 +411,8 @@ class OpenVikingMemoryPlugin(Star):
             f"Pending: {sched['pending_messages']} msgs / ~{sched['pending_tokens']} tokens",
             f"Last commit: {_fmt_ts(sched['last_commit_ts'])}",
             f"Backfill: {bf_status}",
-            f"Venues seen: {len(self._venue_auth)}",
-            f"Logger: {self.logger.name} handlers={len(self.logger.handlers)}"
-            f" parent={self.logger.parent.name if self.logger.parent else 'none'}"
-            f" effective_level={self.logger.getEffectiveLevel()}",
+            f"Venues: {len(self._venue_auth)}",
         ]
-        if self._diag:
-            lines.append("--- Recent events ---")
-            lines.extend(self._diag[-10:])
-        else:
-            lines.append("--- No events logged yet ---")
         yield event.plain_result("\n".join(lines))
 
     @filter.permission_type(PermissionType.ADMIN)
@@ -469,7 +442,7 @@ class OpenVikingMemoryPlugin(Star):
     async def terminate(self):
         await self.scheduler.flush_all()
         await self.ov.close()
-        self.logger.info("OpenViking memory plugin terminated, all sessions flushed")
+        self.logger.info("[OV] plugin terminated, all sessions flushed")
 
 
 def _fmt_ts(ts: float) -> str:
@@ -481,7 +454,6 @@ def _fmt_ts(ts: float) -> str:
 
 
 def _parse_account_from_key(api_key: str) -> str:
-    """Extract account_id from OV API key format: base64(account).base64(user).hash"""
     import base64
 
     parts = api_key.split(".")
