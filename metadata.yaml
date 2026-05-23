@@ -1,4 +1,5 @@
 name: astrbot_plugin_openviking_memory
+display_name: OpenViking Memory Plugin
 description: OpenViking long-term memory integration for AstrBot — auto-capture conversations, semantic recall, and cross-venue memory with configurable isolation.
 author: tosaki
 repo: https://github.com/t0saki/astrbot_plugin_openviking_memory
