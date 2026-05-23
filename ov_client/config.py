@@ -64,6 +64,16 @@ def _cast(key: str, raw: Any) -> Any:
             return default
     if isinstance(default, list) and isinstance(raw, str):
         return [s.strip() for s in raw.split(",") if s.strip()]
+    if isinstance(default, dict) and isinstance(raw, str):
+        import json
+
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return default
     return raw
 
 

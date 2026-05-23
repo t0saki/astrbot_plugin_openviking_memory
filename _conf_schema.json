@@ -18,12 +18,9 @@
     "default": "venue_user"
   },
   "isolation_overrides": {
-    "description": "Per-group isolation mode overrides, e.g. {\"123456\": \"venue_user_fanout\"}",
-    "type": "object",
-    "items": {
-      "type": "string"
-    },
-    "default": {}
+    "description": "Per-group isolation mode overrides as JSON, e.g. {\"123456\": \"venue_user_fanout\"}",
+    "type": "text",
+    "default": "{}"
   },
   "global_user_id": {
     "description": "OV user ID used in global_user mode",
