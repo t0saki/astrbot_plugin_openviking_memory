@@ -14,16 +14,16 @@ from astrbot.api.event.filter import EventMessageType, PermissionType
 from astrbot.api.star import Context, Star
 from astrbot.api import logger
 
-from ov_client.client import OVClient
-from ov_client.config import PluginConfig
-from ov_client.identity import (
+from .ov_client.client import OVClient
+from .ov_client.config import PluginConfig
+from .ov_client.identity import (
     derive_venue,
     derive_ov_user_id,
     derive_session_id,
     get_effective_mode,
     venue_is_group,
 )
-from ov_client.parts import (
+from .ov_client.parts import (
     build_message,
     user_text_part,
     assistant_text_part,
@@ -34,10 +34,10 @@ from ov_client.parts import (
     tool_result_part,
     estimate_tokens,
 )
-from ov_client.recall import recall_and_format
-from ov_client.commit_scheduler import CommitScheduler
-from ov_client.fanout import FanoutManager
-from ov_client.backfill import BackfillManager
+from .ov_client.recall import recall_and_format
+from .ov_client.commit_scheduler import CommitScheduler
+from .ov_client.fanout import FanoutManager
+from .ov_client.backfill import BackfillManager
 
 class OpenVikingMemoryPlugin(Star):
     def __init__(self, context: Context, config=None):
