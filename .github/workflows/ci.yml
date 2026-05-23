@@ -31,8 +31,8 @@ jobs:
               t = v.get('type', '')
               if t not in VALID_TYPES:
                   errors.append(f'{k}: unsupported type {t!r}')
-              if t == 'list' and 'items' not in v:
-                  errors.append(f'{k}: list type missing items')
+              if t in ('list', 'object') and 'items' not in v:
+                  errors.append(f'{k}: {t} type missing items')
           if errors:
               for e in errors:
                   print(f'ERROR: {e}')
