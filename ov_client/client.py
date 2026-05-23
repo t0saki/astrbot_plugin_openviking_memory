@@ -139,6 +139,52 @@ class OVClient:
 
     # -- search ---------------------------------------------------------------
 
+    async def find(
+        self,
+        query: str,
+        target_uri: str | list[str] = "",
+        limit: int = 8,
+        api_key: str | None = None,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        body: dict[str, Any] = {
+            "query": query,
+            "limit": limit,
+            "score_threshold": 0,
+        }
+        if target_uri:
+            body["target_uri"] = target_uri
+        r = await self._http.post(
+            f"{self.base_url}/api/v1/search/find",
+            headers=self._headers(api_key=api_key, user_id=user_id),
+            json=body,
+        )
+        if r.status_code != 200:
+            logger.warning("find failed: %d", r.status_code)
+            return []
+        result = r.json().get("result", {})
+        if isinstance(result, list):
+            return result
+        items: list[dict[str, Any]] = []
+        for bucket in ("memories", "skills"):
+            items.extend(result.get(bucket, []))
+        return items
+
+    async def resolve_user_space(
+        self,
+        api_key: str | None = None,
+        user_id: str | None = None,
+    ) -> str:
+        r = await self._http.get(
+            f"{self.base_url}/api/v1/system/status",
+            headers=self._headers(api_key=api_key, user_id=user_id),
+        )
+        if r.status_code == 200:
+            user = r.json().get("result", {}).get("user", "")
+            if user and isinstance(user, str):
+                return user.strip()
+        return "default"
+
     async def search(
         self,
         query: str,
