@@ -30,11 +30,13 @@ class BackfillManager:
         cfg: PluginConfig,
         kv_get: Callable[[str, Any], Awaitable[Any]],
         kv_put: Callable[[str, Any], Awaitable[None]],
+        kv_prefix: str = "",
     ):
         self._client = client
         self._cfg = cfg
         self._kv_get = kv_get
         self._kv_put = kv_put
+        self._kv_prefix = kv_prefix
         self._running: set[str] = set()
 
     async def maybe_trigger(
@@ -51,12 +53,12 @@ class BackfillManager:
         if venue_id in self._running:
             return
 
-        done_key = f"backfill_done::{venue_id}"
+        done_key = f"{self._kv_prefix}bf_done::{venue_id}"
         done = await self._kv_get(done_key, None)
         if done:
             return
 
-        status_key = f"backfill_status::{venue_id}"
+        status_key = f"{self._kv_prefix}bf_status::{venue_id}"
         status_raw = await self._kv_get(status_key, None)
         if status_raw:
             try:
@@ -80,7 +82,7 @@ class BackfillManager:
         event: Any = None,
         fanout_write: Callable | None = None,
     ):
-        done_key = f"backfill_done::{venue_id}"
+        done_key = f"{self._kv_prefix}bf_done::{venue_id}"
         await self._kv_put(done_key, "")
         self._running.discard(venue_id)
         await self.maybe_trigger(venue_id, platform, group_id, auth, event, fanout_write)
@@ -94,7 +96,7 @@ class BackfillManager:
         event: Any,
         fanout_write: Callable | None,
     ):
-        status_key = f"backfill_status::{venue_id}"
+        status_key = f"{self._kv_prefix}bf_status::{venue_id}"
         await self._kv_put(status_key, json.dumps({"status": "running", "ts": time.time()}))
 
         try:
@@ -147,9 +149,9 @@ class BackfillManager:
             self._running.discard(venue_id)
 
     async def _mark_done(self, venue_id: str, count: int):
-        done_key = f"backfill_done::{venue_id}"
+        done_key = f"{self._kv_prefix}bf_done::{venue_id}"
         await self._kv_put(done_key, json.dumps({"count": count, "ts": time.time()}))
-        status_key = f"backfill_status::{venue_id}"
+        status_key = f"{self._kv_prefix}bf_status::{venue_id}"
         await self._kv_put(status_key, json.dumps({"status": "done", "ts": time.time()}))
 
     async def _fetch_history(
@@ -234,7 +236,7 @@ class BackfillManager:
         return results
 
     async def get_status(self, venue_id: str) -> str:
-        done = await self._kv_get(f"backfill_done::{venue_id}", None)
+        done = await self._kv_get(f"{self._kv_prefix}bf_done::{venue_id}", None)
         if done:
             try:
                 data = json.loads(done) if isinstance(done, str) else done

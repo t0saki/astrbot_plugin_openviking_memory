@@ -7,9 +7,9 @@ commit scheduling, fanout, and backfill.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.event.filter import EventMessageType, PermissionType
 from astrbot.api.star import Context, Star
@@ -39,6 +39,8 @@ from .ov_client.parts import (
 )
 from .ov_client.recall import recall_and_format
 
+logger = logging.getLogger("astrbot")
+
 
 class OpenVikingMemoryPlugin(Star):
     def __init__(self, context: Context, config=None):
@@ -55,6 +57,11 @@ class OpenVikingMemoryPlugin(Star):
             api_key=self.cfg.ov_admin_api_key,
             account_id=account_id,
         )
+        import hashlib
+
+        url_hash = hashlib.md5(self.cfg.ov_base_url.encode()).hexdigest()[:8]
+        self._kv_prefix = f"ov_{url_hash}_"
+
         self.scheduler = CommitScheduler(self.ov, self.cfg)
         self.fanout = FanoutManager(
             self.cfg,
@@ -66,8 +73,8 @@ class OpenVikingMemoryPlugin(Star):
             self.cfg,
             kv_get=self._kv_get,
             kv_put=self._kv_put,
+            kv_prefix=self._kv_prefix,
         )
-        # venue_id -> (api_key, fallback_user_id)
         self._venue_auth: dict[str, tuple[str, str]] = {}
         self._diag: list[str] = []
 
@@ -94,7 +101,7 @@ class OpenVikingMemoryPlugin(Star):
         if venue_id in self._venue_auth:
             return
 
-        cached_key = await self._kv_get(f"ov_user_key::{venue_id}")
+        cached_key = await self._kv_get(f"{self._kv_prefix}key::{venue_id}")
         if cached_key:
             self._venue_auth[venue_id] = (cached_key, "")
             self._log(f"venue {venue_id}: loaded cached key")
@@ -109,7 +116,7 @@ class OpenVikingMemoryPlugin(Star):
         result, err = await self.ov.create_user(ov_user_id, self.cfg.ov_admin_api_key)
         if result and "user_key" in result:
             key = result["user_key"]
-            await self._kv_put(f"ov_user_key::{venue_id}", key)
+            await self._kv_put(f"{self._kv_prefix}key::{venue_id}", key)
             self._venue_auth[venue_id] = (key, "")
             self._log(f"created user {ov_user_id} OK")
             return
