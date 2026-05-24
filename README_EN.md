@@ -22,7 +22,7 @@ They are complementary:
 
 ## Installation
 
-1. In AstrBot WebUI, search **OpenViking Memory** in the Plugin Marketplace and install; or manually add the repo URL in Plugin Management: `https://github.com/t0saki/astrbot_plugin_openviking_memory`
+1. In AstrBot WebUI, search **OpenViking Memory** in the Plugin Marketplace and install; or install from URL: `https://github.com/t0saki/astrbot_plugin_openviking_memory.git`
 2. Fill in the plugin configuration (see below).
 3. Reload the plugin.
 
