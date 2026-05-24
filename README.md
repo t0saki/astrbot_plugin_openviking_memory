@@ -8,7 +8,7 @@
 
 ## 安装
 
-1. 在 AstrBot WebUI → 插件管理 中添加本仓库地址
+1. 在 AstrBot WebUI → 插件市场搜索 **OpenViking Memory** 并安装；或在插件管理中手动添加仓库地址：`https://github.com/t0saki/astrbot_plugin_openviking_memory`
 2. 填写插件配置（见下方）
 3. 重载插件
 
