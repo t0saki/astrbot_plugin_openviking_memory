@@ -54,7 +54,7 @@ from .ov_client.recall import recall_and_format
     "astrbot_plugin_openviking_memory",
     "tosaki",
     "OpenViking Memory Plugin",
-    "0.1.0",
+    "0.2.0",
     "https://github.com/t0saki/astrbot_plugin_openviking_memory",
 )
 class OpenVikingMemoryPlugin(Star):
@@ -489,7 +489,7 @@ class OpenVikingMemoryPlugin(Star):
         peer_status = f"on ({self.cfg.peer_recall_scope})" if self.cfg.peer_enabled else "off"
 
         lines = [
-            "OpenViking Memory Plugin v0.1.0",
+            "OpenViking Memory Plugin v0.2.0",
             f"Server: {self.cfg.ov_base_url} ({'OK' if healthy else 'UNREACHABLE'})",
             f"Account: {self.ov.account_id or '(not set)'}",
             f"Self scope: {scope}",

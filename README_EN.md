@@ -8,8 +8,10 @@ Auto-captures conversations and performs semantic recall on every LLM request. B
 
 ## How it works
 
-- **Auto-capture**: Every user message and bot reply is written to an OpenViking session. Tool call I/O is captured too (AstrBot >= 4.23.1).
+- **Auto-capture**: Every user message and bot reply is written to an OpenViking session. Group messages are prefixed with `[group:<id> · name(qq)]` so the source is preserved.
 - **Peer profiles**: Incoming group messages carry a `peer_id` (the sender); on commit OV builds a per-person profile under `viking://user/<bot>/peers/<sender_id>/`. The bot's own replies and tool I/O stay "self".
+- **Structured tool calls**: Tool calls and results are recorded as standalone `tool` parts (`tool_name`/`tool_input`/`tool_status`), not folded into text, so the server can process them separately.
+- **Image transcription**: Optionally transcribe images to text via a vision provider (see [Image transcription](#image-transcription)).
 - **Auto-recall**: Before each LLM request, the plugin recalls self (bot/group context) + the current speaker + recently-active members and appends them to the system prompt.
 - **Auto-commit**: Sessions are committed (archived + memory extracted) based on message count, token threshold, or idle timeout.
 - **Backfill**: On first encounter with a group, historical messages are pulled from the platform and ingested into OV.
@@ -54,7 +56,11 @@ All fields are configured via AstrBot WebUI after installation.
 | `backfill_on_first_seen` | `true` | Pull history on first group encounter |
 | `backfill_max_messages` | `500` | Max messages to backfill |
 | `ingest_attachments` | `false` | Push images/files to OV resources |
-| `capture_tool_io` | `true` | Record tool inputs/outputs |
+| `capture_tool_io` | `true` | Record tool inputs/outputs as structured `tool` parts |
+| `capture_image_caption` | `true` | Capture AstrBot's caption for bot-directed images (ignored when `caption_all_images` is on) |
+| `caption_all_images` | `false` | Actively transcribe **every** image (incl. ambient/non-@bot): one vision-model call per image, needs a provider |
+| `image_caption_provider_id` | | Provider id for transcription (empty = AstrBot's `default_image_caption_provider_id`) |
+| `image_caption_prompt` | | Transcription prompt (empty = AstrBot's `image_caption_prompt` or a built-in default) |
 
 > Legacy `isolation_mode` values (`venue_user` / `venue_user_fanout` / `global_user`) are still recognized and auto-mapped onto `self_scope` (`venue` / `global` / `global`) with a deprecation log. `venue_user_fanout` is superseded by `global` + peer.
 
@@ -72,6 +78,15 @@ The model is **one bot "self" + one "peer" per person**. `self_scope` controls t
 All peers live under the same bot-self space (`viking://user/<bot>/peers/*`). Recall by default pulls self + the current speaker + recently-active members, so when A asks something the bot can also recall B's and C's profiles (e.g. "what does Bob like?").
 
 > OpenViking does not allow searching *all* peers at once — each recalled person must be named explicitly, which `peer_recall_scope` controls. This is cleaner than the old fanout: each person's profile is stored once, with no lossy copying.
+
+## Image transcription
+
+Two ways to turn image content into text memory:
+
+- **`capture_image_caption` (default on)**: reuse AstrBot's own image captioning. **Only covers images sent to the bot that trigger a reply**, and only when AstrBot has an image-caption provider configured and the main model is *not* multimodal (a multimodal main model gets the image directly, so no text caption is generated).
+- **`caption_all_images` (default off)**: the plugin actively calls a vision provider once per image — including ambient group images nobody @-mentioned the bot with — independent of the above conditions. Costs one VLM call per image; set `image_caption_provider_id` to a vision-capable provider (empty = AstrBot's `default_image_caption_provider_id`). Runs in the background, off the message path.
+
+Stored as `[group:<id> · name(qq) · image] <transcription>`, attributed to the sender's peer profile. Backfilled historical images are not transcribed — just normalized to `[image]`.
 
 ## Recommended: Adding OV MCP tools
 
