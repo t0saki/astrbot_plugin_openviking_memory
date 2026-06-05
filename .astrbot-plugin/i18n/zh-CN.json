@@ -1,32 +1,41 @@
 {
   "metadata": {
     "display_name": "OpenViking 记忆插件",
-    "desc": "为 AstrBot 接入 OpenViking 长期记忆 — 自动捕获对话、语义召回、可配置的跨群记忆隔离。"
+    "desc": "为 AstrBot 接入 OpenViking 长期记忆 — 基于 peer 模型：bot 是 self、每个人是一个 peer，自动捕获对话、语义召回、为每个人单独建画像。"
   },
   "config": {
     "ov_base_url": {
-      "description": "OpenViking 服务端地址"
+      "description": "OpenViking 服务端地址（需 peer-contract 版本，即含 PR #2236 的 OpenViking）"
     },
     "ov_admin_api_key": {
-      "description": "Admin API Key（仅在首次创建 venue user 时使用）"
+      "description": "Admin API Key（仅 venue 模式下用于创建 per-venue user）"
     },
     "ov_user_api_key": {
-      "description": "普通 User API Key（global_user 模式下可直接使用，无需 Admin Key）"
-    },
-    "ov_agent_id": {
-      "description": "OV Agent 标识（通过 X-OpenViking-Agent header 传递，留空则不传）"
+      "description": "普通 User API Key（global 模式下作为 bot self 身份直接使用，推荐）"
     },
     "ov_account_id": {
-      "description": "OV Account ID（留空则从 API Key 自动解析）"
+      "description": "OV Account ID（留空则从 API Key 自动解析，仅 venue 建用户时需要）"
     },
-    "isolation_mode": {
-      "description": "记忆隔离模式：venue_user（每群/私聊独立，默认）| venue_user_fanout（跨群共享）| global_user（全局共享）"
-    },
-    "isolation_overrides": {
-      "description": "按群号覆盖隔离模式（JSON 格式），例如 {\"123456\": \"venue_user_fanout\"}"
+    "self_scope": {
+      "description": "记忆归属（self）粒度：global（全局一个 bot self，peer 跨群共享，默认）| venue（每群一个 self，peer 按群隔离）"
     },
     "global_user_id": {
-      "description": "global_user 模式下使用的 OV 用户 ID"
+      "description": "global 模式且只有 admin key 时，自动创建的 bot self 用户名（设了 User Key 则忽略）"
+    },
+    "isolation_overrides": {
+      "description": "按群号覆盖 self_scope（JSON 格式），例如 {\"123456\": \"venue\"}。旧值 venue_user/venue_user_fanout/global_user 会自动映射"
+    },
+    "peer_enabled": {
+      "description": "给群成员消息打 peer_id 并在 commit 时启用 self+peer 提取（关闭则退化为仅 self 记忆）"
+    },
+    "peer_recall_scope": {
+      "description": "召回哪些 peer：speaker（self+当前说话人）| speaker_plus_active（再加近期活跃成员，默认）| none（仅 self）"
+    },
+    "peer_recall_active_window": {
+      "description": "speaker_plus_active 下额外召回的近期活跃成员上限"
+    },
+    "trusted_mode": {
+      "description": "仅当 OV 以 auth_mode=trusted（受信网关后）运行时开启，会发送 X-OpenViking-Account/User 头；标准 api_key 部署保持关闭"
     },
     "auto_recall_enabled": {
       "description": "每次 LLM 请求前自动召回记忆"
@@ -47,16 +56,13 @@
       "description": "累积 token 超过此值后自动提交"
     },
     "commit_idle_seconds": {
-      "description": "空闲 N 秒后自动提交"
+      "description": "空闲 N 秒后自动提交（也用作 peer 召回的「近期」时间窗）"
     },
     "ingest_attachments": {
       "description": "将图片/文件推送至 OV 资源库（需配置 VLM）"
     },
     "capture_tool_io": {
       "description": "捕获 LLM 工具调用的输入/输出"
-    },
-    "fanout_member_cache_ttl_seconds": {
-      "description": "群成员列表缓存时间（秒，fanout 模式用）"
     },
     "backfill_on_first_seen": {
       "description": "首次接入群聊时拉取历史消息"
