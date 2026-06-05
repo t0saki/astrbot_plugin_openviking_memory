@@ -49,7 +49,12 @@ def derive_ov_user_id(
 
 
 def derive_session_id(venue_id: str) -> str:
-    return f"astrbot::{venue_id}"
+    # Sessions are keyed globally by viking://session/<id>. The old "astrbot::<venue>"
+    # ids collide with sessions created by pre-peer deployments, whose .meta.json
+    # lacks account attribution and fails OV's account-scoped visibility check
+    # (NotFoundError → 404 on append/commit). Use a fresh, colon-free namespace so
+    # every session is created cleanly under the current identity.
+    return f"astrbot-sess-{venue_id}"
 
 
 def venue_is_group(venue_id: str) -> bool:
