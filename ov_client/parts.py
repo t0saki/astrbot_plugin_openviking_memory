@@ -15,6 +15,41 @@ MAX_TOOL_OUTPUT_CHARS = 4000
 
 _IMAGE_CAPTION_RE = re.compile(r"<image_caption>(.*?)</image_caption>", re.S)
 
+# OneBot/aiocqhttp CQ codes leak into backfilled raw_message strings as noise
+# like [CQ:image,summary=...,file=...,url=...]. Normalize them to short markers.
+_CQ_RE = re.compile(r"\[CQ:(\w+)(?:,([^\]]*))?\]")
+_CQ_MARKERS = {
+    "image": "[image]",
+    "record": "[voice]",
+    "video": "[video]",
+    "file": "[file]",
+}
+_CQ_DROP = {"face", "reply", "json", "xml", "forward", "markdown", "node"}
+_HTML_ENTITIES = {"&amp;": "&", "&#91;": "[", "&#93;": "]", "&#44;": ","}
+
+
+def _cq_replace(m: "re.Match[str]") -> str:
+    typ = m.group(1)
+    if typ == "at":
+        params = dict(kv.split("=", 1) for kv in (m.group(2) or "").split(",") if "=" in kv)
+        qq = params.get("qq", "")
+        return "@all" if qq == "all" else (f"@{qq}" if qq else "@")
+    if typ in _CQ_MARKERS:
+        return _CQ_MARKERS[typ]
+    if typ in _CQ_DROP:
+        return ""
+    return f"[{typ}]"
+
+
+def clean_onebot_text(text: str) -> str:
+    """Strip CQ codes and unescape entities from an OneBot raw_message string."""
+    if not text:
+        return text
+    text = _CQ_RE.sub(_cq_replace, text)
+    for ent, ch in _HTML_ENTITIES.items():
+        text = text.replace(ent, ch)
+    return text.strip()
+
 
 def user_text_part(
     text: str,
@@ -41,8 +76,10 @@ def assistant_text_part(text: str) -> dict[str, Any]:
     return {"type": "text", "text": text}
 
 
-def image_placeholder_part(filename_or_url: str) -> dict[str, Any]:
-    return {"type": "text", "text": f"[image: {filename_or_url}]"}
+def image_placeholder_part(filename_or_url: str = "") -> dict[str, Any]:
+    # The QQ/NT url is ephemeral (rkey expires) — storing it is pure noise, so
+    # keep just a marker. The image's content, if any, comes from the caption.
+    return {"type": "text", "text": "[image]"}
 
 
 def file_placeholder_part(filename: str) -> dict[str, Any]:

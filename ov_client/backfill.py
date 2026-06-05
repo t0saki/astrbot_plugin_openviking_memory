@@ -16,7 +16,7 @@ from typing import Any, Awaitable, Callable
 from .client import PEER_MEMORY_POLICY, OVClient
 from .config import PluginConfig
 from .identity import derive_session_id, safe_peer_id, venue_is_group
-from .parts import build_message, user_text_part
+from .parts import build_message, clean_onebot_text, user_text_part
 
 logger = logging.getLogger("astrbot_plugin_openviking_memory")
 
@@ -198,17 +198,23 @@ class BackfillManager:
 
                     raw_msg = msg.get("raw_message") or msg.get("message", "")
                     if isinstance(raw_msg, list):
-                        text_parts = [
-                            seg.get("data", {}).get("text", "")
-                            for seg in raw_msg
-                            if seg.get("type") == "text"
-                        ]
-                        raw_msg = " ".join(t for t in text_parts if t)
+                        seg_texts = []
+                        for seg in raw_msg:
+                            stype = seg.get("type")
+                            if stype == "text":
+                                seg_texts.append(seg.get("data", {}).get("text", ""))
+                            elif stype == "image":
+                                seg_texts.append("[image]")
+                            elif stype == "at":
+                                seg_texts.append(f"@{seg.get('data', {}).get('qq', '')}")
+                        text = " ".join(t for t in seg_texts if t)
+                    else:
+                        text = clean_onebot_text(str(raw_msg))
 
                     sender = msg.get("sender", {})
                     results.append(
                         {
-                            "text": str(raw_msg),
+                            "text": text,
                             "sender_name": sender.get("nickname", sender.get("card", "")),
                             "sender_id": str(msg.get("user_id", sender.get("user_id", ""))),
                             "ts": str(ts),

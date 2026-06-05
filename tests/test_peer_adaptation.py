@@ -14,7 +14,9 @@ from ov_client.config import PluginConfig, normalize_self_scope
 from ov_client.identity import get_effective_self_scope, safe_peer_id
 from ov_client.parts import (
     MAX_TOOL_OUTPUT_CHARS,
+    clean_onebot_text,
     image_caption_part,
+    image_placeholder_part,
     parse_image_captions,
     tool_call_part,
     tool_result_part,
@@ -302,6 +304,26 @@ def test_image_caption_part_group_and_dm():
     assert g["text"] == "[group:732524901 · Alice(12345) · image] a cat"
     dm = image_caption_part("a cat", is_group=False)
     assert dm["text"] == "[image] a cat"
+
+
+# -- OneBot CQ-code cleanup -----------------------------------------------
+
+
+def test_clean_onebot_text_image_strips_url_noise():
+    raw = (
+        "[CQ:image,summary=&#91;？&#93;,file=A.jpg,"
+        "url=https://x.qq.com/d?appid=1&amp;fileid=Eh,file_size=2027]"
+    )
+    assert clean_onebot_text(raw) == "[image]"
+
+
+def test_clean_onebot_text_at_and_face_and_text():
+    assert clean_onebot_text("[CQ:at,qq=123] hi [CQ:face,id=4]") == "@123 hi"
+    assert clean_onebot_text("[CQ:at,qq=all] all") == "@all all"
+
+
+def test_image_placeholder_is_bare_marker():
+    assert image_placeholder_part("https://ephemeral/url")["text"] == "[image]"
 
 
 # -- backfill dedup -------------------------------------------------------
