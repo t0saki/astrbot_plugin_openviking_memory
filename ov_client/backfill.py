@@ -46,29 +46,39 @@ class BackfillManager:
         group_id: str,
         auth: dict,
         event: Any = None,
+        force: bool = False,
     ):
-        if not self._cfg.backfill_on_first_seen:
+        if not force and not self._cfg.backfill_on_first_seen:
             return
+        # Claim the venue synchronously (before any await) so concurrent messages,
+        # or an auto + forced trigger, can't start two backfills for one venue.
         if venue_id in self._running:
             return
-
-        done_key = f"{self._kv_prefix}bf_done::{venue_id}"
-        done = await self._kv_get(done_key, None)
-        if done:
-            return
-
-        status_key = f"{self._kv_prefix}bf_status::{venue_id}"
-        status_raw = await self._kv_get(status_key, None)
-        if status_raw:
-            try:
-                status = json.loads(status_raw) if isinstance(status_raw, str) else status_raw
-                if time.time() - status.get("ts", 0) < STALE_RUNNING_SECONDS:
-                    return
-            except (json.JSONDecodeError, TypeError):
-                pass
-
         self._running.add(venue_id)
-        asyncio.create_task(self._run_backfill(venue_id, platform, group_id, auth, event))
+
+        started = False
+        try:
+            if not force:
+                done = await self._kv_get(f"{self._kv_prefix}bf_done::{venue_id}", None)
+                if done:
+                    return
+                status_raw = await self._kv_get(f"{self._kv_prefix}bf_status::{venue_id}", None)
+                if status_raw:
+                    try:
+                        status = (
+                            json.loads(status_raw) if isinstance(status_raw, str) else status_raw
+                        )
+                        if time.time() - status.get("ts", 0) < STALE_RUNNING_SECONDS:
+                            return
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            asyncio.create_task(self._run_backfill(venue_id, platform, group_id, auth, event))
+            started = True
+        finally:
+            # _run_backfill releases the claim in its own finally; only release
+            # here on the early-return paths that never started the task.
+            if not started:
+                self._running.discard(venue_id)
 
     async def force_backfill(
         self,
@@ -78,10 +88,9 @@ class BackfillManager:
         auth: dict,
         event: Any = None,
     ):
-        done_key = f"{self._kv_prefix}bf_done::{venue_id}"
-        await self._kv_put(done_key, "")
-        self._running.discard(venue_id)
-        await self.maybe_trigger(venue_id, platform, group_id, auth, event)
+        # Re-run unconditionally (bypasses the first-seen flag + done/status
+        # markers), still deduped by the _running guard inside maybe_trigger.
+        await self.maybe_trigger(venue_id, platform, group_id, auth, event, force=True)
 
     async def _run_backfill(
         self,
@@ -113,7 +122,9 @@ class BackfillManager:
                         continue
                     sender_name = msg.get("sender_name", "")
                     sender_id = msg.get("sender_id", "")
-                    parts = [user_text_part(text, sender_name, sender_id, is_group)]
+                    parts = [
+                        user_text_part(text, sender_name, sender_id, is_group, group_id=group_id)
+                    ]
                     payload = build_message("user", parts)
                     peer_id = safe_peer_id(sender_id) if self._cfg.peer_enabled else None
                     await self._client.add_message(session_id, payload, peer_id=peer_id, **auth)

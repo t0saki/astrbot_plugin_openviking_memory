@@ -7,10 +7,12 @@ import json
 
 import httpx
 
+from ov_client.backfill import BackfillManager
 from ov_client.client import PEER_MEMORY_POLICY, OVClient
 from ov_client.commit_scheduler import CommitScheduler
 from ov_client.config import PluginConfig, normalize_self_scope
 from ov_client.identity import get_effective_self_scope, safe_peer_id
+from ov_client.parts import user_text_part
 from ov_client.presence import PresenceTracker
 from ov_client.recall import _build_recall_targets
 
@@ -235,3 +237,59 @@ def test_commit_empty_body_without_policy():
 
     _run_with_mock(handler, lambda c: c.commit_session("sess"))
     assert captured["body"] == {}
+
+
+# -- message parts (group id) ---------------------------------------------
+
+
+def test_user_text_part_includes_group_in_group_chat():
+    part = user_text_part("hello", "Alice", "12345", is_group=True, group_id="732524901")
+    assert part["text"] == "[group:732524901 · Alice(12345)] hello"
+
+
+def test_user_text_part_group_without_sender():
+    part = user_text_part("hi", "", "", is_group=True, group_id="732524901")
+    assert part["text"] == "[group:732524901] hi"
+
+
+def test_user_text_part_dm_has_no_prefix():
+    part = user_text_part("hi", "Alice", "12345", is_group=False)
+    assert part["text"] == "hi"
+
+
+# -- backfill dedup -------------------------------------------------------
+
+
+def test_backfill_maybe_trigger_dedups_concurrent():
+    store: dict = {}
+
+    async def kv_get(k, d=None):
+        return store.get(k, d)
+
+    async def kv_put(k, v):
+        store[k] = v
+
+    async def run():
+        bm = BackfillManager(
+            client=object(),
+            cfg=PluginConfig({}),
+            kv_get=kv_get,
+            kv_put=kv_put,
+            kv_prefix="t_",
+        )
+        started = []
+
+        async def fake_run(venue_id, platform, group_id, auth, event):
+            started.append(venue_id)
+            await asyncio.sleep(0.01)
+            bm._running.discard(venue_id)
+
+        bm._run_backfill = fake_run
+        await asyncio.gather(
+            bm.maybe_trigger("v", "p", "g", {}),
+            bm.maybe_trigger("v", "p", "g", {}),
+        )
+        await asyncio.sleep(0.05)
+        return started
+
+    assert asyncio.run(run()) == ["v"]

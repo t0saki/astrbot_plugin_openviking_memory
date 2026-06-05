@@ -196,6 +196,10 @@ class OpenVikingMemoryPlugin(Star):
         info = self._extract_event_info(event)
         if not info["text"].strip():
             return
+        # Don't capture our own commands as memory, and don't let them double-fire
+        # backfill alongside the command handler.
+        if _is_self_command(info["text"]):
+            return
 
         venue_id = derive_venue(info["platform"], info["group_id"], info["sender_id"])
         if self.cfg.is_bypassed(venue_id):
@@ -209,7 +213,15 @@ class OpenVikingMemoryPlugin(Star):
         session_id = derive_session_id(venue_id)
         is_group = venue_is_group(venue_id)
 
-        parts = [user_text_part(info["text"], info["sender_name"], info["sender_id"], is_group)]
+        parts = [
+            user_text_part(
+                info["text"],
+                info["sender_name"],
+                info["sender_id"],
+                is_group,
+                group_id=info["group_id"],
+            )
+        ]
 
         msg_chain = getattr(event, "message_obj", None)
         if msg_chain:
@@ -427,6 +439,14 @@ class OpenVikingMemoryPlugin(Star):
         await self.scheduler.flush_all()
         await self.ov.close()
         self.logger.info("[OV] plugin terminated, all sessions flushed")
+
+
+_SELF_COMMANDS = ("ov_backfill", "ov-backfill", "ov_status", "ov-status")
+
+
+def _is_self_command(text: str) -> bool:
+    t = text.strip().lstrip("/").lower()
+    return any(t == c or t.startswith(c + " ") for c in _SELF_COMMANDS)
 
 
 def _fmt_ts(ts: float) -> str:

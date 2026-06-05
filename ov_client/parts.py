@@ -15,10 +15,19 @@ def user_text_part(
     sender_name: str = "",
     sender_id: str = "",
     is_group: bool = False,
+    group_id: str = "",
 ) -> dict[str, Any]:
-    if is_group and sender_name:
-        label = f"[{sender_name}({sender_id})] " if sender_id else f"[{sender_name}] "
-        text = label + text
+    # In a group, prefix the sender AND the group id. The group id matters under
+    # global self_scope, where messages from every group land in one bot self —
+    # without it the extracted memory loses which group it came from.
+    if is_group:
+        bits = []
+        if group_id:
+            bits.append(f"group:{group_id}")
+        if sender_name:
+            bits.append(f"{sender_name}({sender_id})" if sender_id else sender_name)
+        if bits:
+            text = f"[{' · '.join(bits)}] {text}"
     return {"type": "text", "text": text}
 
 
