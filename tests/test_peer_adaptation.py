@@ -12,7 +12,14 @@ from ov_client.client import PEER_MEMORY_POLICY, OVClient
 from ov_client.commit_scheduler import CommitScheduler
 from ov_client.config import PluginConfig, normalize_self_scope
 from ov_client.identity import get_effective_self_scope, safe_peer_id
-from ov_client.parts import user_text_part
+from ov_client.parts import (
+    MAX_TOOL_OUTPUT_CHARS,
+    image_caption_part,
+    parse_image_captions,
+    tool_call_part,
+    tool_result_part,
+    user_text_part,
+)
 from ov_client.presence import PresenceTracker
 from ov_client.recall import _build_recall_targets
 
@@ -255,6 +262,46 @@ def test_user_text_part_group_without_sender():
 def test_user_text_part_dm_has_no_prefix():
     part = user_text_part("hi", "Alice", "12345", is_group=False)
     assert part["text"] == "hi"
+
+
+# -- tool parts (OV ToolPart shape) ---------------------------------------
+
+
+def test_tool_call_part_keeps_dict_input_and_running_status():
+    part = tool_call_part("search", {"q": "weather"})
+    assert part["type"] == "tool"
+    assert part["tool_name"] == "search"
+    assert part["tool_input"] == {"q": "weather"}  # dict preserved, not stringified
+    assert part["tool_status"] == "running"
+
+
+def test_tool_call_part_wraps_non_dict_input():
+    assert tool_call_part("t", "raw")["tool_input"] == {"value": "raw"}
+    assert "tool_input" not in tool_call_part("t", None)
+
+
+def test_tool_result_part_completed_and_truncated():
+    part = tool_result_part("search", "x" * (MAX_TOOL_OUTPUT_CHARS + 500))
+    assert part["tool_status"] == "completed"
+    assert part["tool_output"].endswith("…[truncated]")
+    assert len(part["tool_output"]) <= MAX_TOOL_OUTPUT_CHARS + 20
+
+
+# -- image caption --------------------------------------------------------
+
+
+def test_parse_image_captions():
+    text = "<image_caption>a cat on a mat</image_caption>"
+    assert parse_image_captions(text) == ["a cat on a mat"]
+    assert parse_image_captions("[Image Attachment: path /x]") == []
+    assert parse_image_captions("") == []
+
+
+def test_image_caption_part_group_and_dm():
+    g = image_caption_part("a cat", "Alice", "12345", is_group=True, group_id="732524901")
+    assert g["text"] == "[group:732524901 · Alice(12345) · image] a cat"
+    dm = image_caption_part("a cat", is_group=False)
+    assert dm["text"] == "[image] a cat"
 
 
 # -- backfill dedup -------------------------------------------------------

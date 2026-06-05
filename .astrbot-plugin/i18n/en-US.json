@@ -62,7 +62,10 @@
       "description": "Push images/files to OV resources for VLM indexing"
     },
     "capture_tool_io": {
-      "description": "Capture LLM tool call inputs/outputs"
+      "description": "Capture LLM tool call inputs/outputs as structured tool parts"
+    },
+    "capture_image_caption": {
+      "description": "Capture AstrBot's image-to-text caption (requires image captioning enabled in AstrBot) as memory, marked as image-derived"
     },
     "backfill_on_first_seen": {
       "description": "Pull historical messages when a venue is first seen"

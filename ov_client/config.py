@@ -37,6 +37,7 @@ _DEFAULTS: dict[str, Any] = {
     "commit_idle_seconds": 1800,
     "ingest_attachments": False,
     "capture_tool_io": True,
+    "capture_image_caption": True,
     "backfill_on_first_seen": True,
     "backfill_max_messages": 500,
     "backfill_max_age_days": 30,

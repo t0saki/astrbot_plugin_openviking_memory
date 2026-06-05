@@ -62,7 +62,10 @@
       "description": "将图片/文件推送至 OV 资源库（需配置 VLM）"
     },
     "capture_tool_io": {
-      "description": "捕获 LLM 工具调用的输入/输出"
+      "description": "以结构化 tool part 捕获 LLM 工具调用的输入/输出"
+    },
+    "capture_image_caption": {
+      "description": "把 AstrBot 的图片转述文字（需在 AstrBot 开启图片转述）入库，并标记为图片来源"
     },
     "backfill_on_first_seen": {
       "description": "首次接入群聊时拉取历史消息"

@@ -92,7 +92,12 @@
     "default": false
   },
   "capture_tool_io": {
-    "description": "Capture LLM tool call inputs/outputs",
+    "description": "Capture LLM tool call inputs/outputs as structured tool parts",
+    "type": "bool",
+    "default": true
+  },
+  "capture_image_caption": {
+    "description": "Capture AstrBot's image-to-text caption (requires image captioning enabled in AstrBot) as memory, marked as image-derived",
     "type": "bool",
     "default": true
   },

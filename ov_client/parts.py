@@ -7,7 +7,13 @@ Images/files are represented as text placeholders since OV has no image part.
 
 from __future__ import annotations
 
+import re
 from typing import Any
+
+# OV tool part status values: pending | running | completed | error.
+MAX_TOOL_OUTPUT_CHARS = 4000
+
+_IMAGE_CAPTION_RE = re.compile(r"<image_caption>(.*?)</image_caption>", re.S)
 
 
 def user_text_part(
@@ -43,22 +49,60 @@ def file_placeholder_part(filename: str) -> dict[str, Any]:
     return {"type": "text", "text": f"[file: {filename}]"}
 
 
-def tool_call_part(tool_name: str, tool_input: Any) -> dict[str, Any]:
-    inp = tool_input if isinstance(tool_input, str) else _safe_json(tool_input)
-    return {
-        "type": "tool",
-        "tool_name": tool_name,
-        "tool_input": inp,
-    }
+def tool_call_part(tool_name: str, tool_input: Any, tool_id: str = "") -> dict[str, Any]:
+    # OV's ToolPart wants tool_input as an object (Optional[dict]); AstrBot passes
+    # tool_args as a dict already. Status "running" marks this as the call side.
+    if isinstance(tool_input, dict):
+        inp: Any = tool_input
+    elif tool_input is None:
+        inp = None
+    else:
+        inp = {"value": tool_input}
+    part: dict[str, Any] = {"type": "tool", "tool_name": tool_name, "tool_status": "running"}
+    if tool_id:
+        part["tool_id"] = tool_id
+    if inp is not None:
+        part["tool_input"] = inp
+    return part
 
 
-def tool_result_part(tool_name: str, tool_output: Any) -> dict[str, Any]:
+def tool_result_part(tool_name: str, tool_output: Any, tool_id: str = "") -> dict[str, Any]:
     out = tool_output if isinstance(tool_output, str) else _safe_json(tool_output)
-    return {
+    if len(out) > MAX_TOOL_OUTPUT_CHARS:
+        out = out[:MAX_TOOL_OUTPUT_CHARS] + "…[truncated]"
+    part: dict[str, Any] = {
         "type": "tool",
         "tool_name": tool_name,
         "tool_output": out,
+        "tool_status": "completed",
     }
+    if tool_id:
+        part["tool_id"] = tool_id
+    return part
+
+
+def image_caption_part(
+    caption: str,
+    sender_name: str = "",
+    sender_id: str = "",
+    is_group: bool = False,
+    group_id: str = "",
+) -> dict[str, Any]:
+    """A text part carrying AstrBot's image-to-text caption, marked as image-derived."""
+    bits = []
+    if is_group and group_id:
+        bits.append(f"group:{group_id}")
+    if is_group and sender_name:
+        bits.append(f"{sender_name}({sender_id})" if sender_id else sender_name)
+    bits.append("image")
+    return {"type": "text", "text": f"[{' · '.join(bits)}] {caption}"}
+
+
+def parse_image_captions(text: str) -> list[str]:
+    """Extract <image_caption>…</image_caption> bodies from a content-part text."""
+    if not text:
+        return []
+    return [m.strip() for m in _IMAGE_CAPTION_RE.findall(text) if m.strip()]
 
 
 def build_message(role: str, parts: list[dict]) -> dict[str, Any]:

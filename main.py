@@ -38,7 +38,9 @@ from .ov_client.parts import (
     build_message,
     estimate_tokens,
     file_placeholder_part,
+    image_caption_part,
     image_placeholder_part,
+    parse_image_captions,
     tool_call_part,
     tool_result_part,
     user_text_part,
@@ -262,14 +264,7 @@ class OpenVikingMemoryPlugin(Star):
 
     @filter.on_llm_request()
     async def on_llm_request(self, event: AstrMessageEvent, req: Any):
-        if not self.cfg.auto_recall_enabled:
-            return
-
         info = self._extract_event_info(event)
-        query = info["text"]
-        if not query.strip():
-            return
-
         venue_id = derive_venue(info["platform"], info["group_id"], info["sender_id"])
         if self.cfg.is_bypassed(venue_id):
             return
@@ -279,14 +274,33 @@ class OpenVikingMemoryPlugin(Star):
         )
         await self._ensure_self_auth(venue_id, info["group_id"], ov_user_id)
         auth = self._auth(venue_id)
+        session_id = derive_session_id(venue_id)
+        peer_id = self._peer_id_for(info["sender_id"])
 
-        speaker_pid = self._peer_id_for(info["sender_id"])
-        active = self.presence.active(venue_id, exclude=speaker_pid)
+        # AstrBot turns images into a <image_caption>…</image_caption> text part on
+        # the request (req built before this hook fires). Image-only messages have
+        # empty message_str, so on_user_message skipped them — capture the caption
+        # here as the image's textual content.
+        if self.cfg.capture_image_caption:
+            is_group = venue_is_group(venue_id)
+            for cap in _extract_image_captions(req):
+                part = image_caption_part(
+                    cap, info["sender_name"], info["sender_id"], is_group, info["group_id"]
+                )
+                if await self.ov.add_message(
+                    session_id, build_message("user", [part]), peer_id=peer_id, **auth
+                ):
+                    self.scheduler.set_auth(session_id, auth)
+                    await self.scheduler.record_message(session_id, estimate_tokens(cap))
 
+        if not self.cfg.auto_recall_enabled or not info["text"].strip():
+            return
+
+        active = self.presence.active(venue_id, exclude=peer_id)
         block = await recall_and_format(
             self.ov,
             self.cfg,
-            query,
+            info["text"],
             venue_id,
             ov_user_id,
             speaker_id=info["sender_id"],
@@ -329,34 +343,42 @@ class OpenVikingMemoryPlugin(Star):
 
     @filter.on_using_llm_tool()
     async def on_tool_call(self, event: AstrMessageEvent, *args, **kwargs):
+        # AstrBot signature: (event, tool: FunctionTool, tool_args: dict | None)
         if not self.cfg.capture_tool_io:
             return
         info = self._extract_event_info(event)
         venue_id = derive_venue(info["platform"], info["group_id"], info["sender_id"])
         if self.cfg.is_bypassed(venue_id):
             return
-        t_name = str(kwargs.get("tool_name", args[0] if args else ""))
-        t_input = kwargs.get("tool_input", args[1] if len(args) > 1 else None)
+        tool = kwargs.get("tool", args[0] if args else None)
+        tool_args = kwargs.get("tool_args", args[1] if len(args) > 1 else None)
+        t_name = _tool_name(tool)
+        if not t_name:
+            return
         auth = self._auth(venue_id)
         session_id = derive_session_id(venue_id)
-        parts = [tool_call_part(t_name, t_input)]
-        payload = build_message("assistant", parts)
+        payload = build_message("assistant", [tool_call_part(t_name, tool_args)])
         await self.ov.add_message(session_id, payload, **auth)
 
     @filter.on_llm_tool_respond()
     async def on_tool_respond(self, event: AstrMessageEvent, *args, **kwargs):
+        # AstrBot signature: (event, tool, tool_args, tool_result: CallToolResult | None)
         if not self.cfg.capture_tool_io:
             return
         info = self._extract_event_info(event)
         venue_id = derive_venue(info["platform"], info["group_id"], info["sender_id"])
         if self.cfg.is_bypassed(venue_id):
             return
-        t_name = str(kwargs.get("tool_name", args[0] if args else ""))
-        t_output = kwargs.get("tool_output", args[-1] if args else None)
+        tool = kwargs.get("tool", args[0] if args else None)
+        tool_result = kwargs.get("tool_result", args[2] if len(args) > 2 else None)
+        t_name = _tool_name(tool)
+        if not t_name:
+            return
         auth = self._auth(venue_id)
         session_id = derive_session_id(venue_id)
-        parts = [tool_result_part(t_name, t_output)]
-        payload = build_message("user", parts)
+        payload = build_message(
+            "assistant", [tool_result_part(t_name, _tool_result_text(tool_result))]
+        )
         await self.ov.add_message(session_id, payload, **auth)
 
     # -- hook: after message sent → commit eval -------------------------------
@@ -447,6 +469,38 @@ _SELF_COMMANDS = ("ov_backfill", "ov-backfill", "ov_status", "ov-status")
 def _is_self_command(text: str) -> bool:
     t = text.strip().lstrip("/").lower()
     return any(t == c or t.startswith(c + " ") for c in _SELF_COMMANDS)
+
+
+def _tool_name(tool: Any) -> str:
+    """Extract a tool's name from AstrBot's FunctionTool (or a fallback)."""
+    if tool is None:
+        return ""
+    name = getattr(tool, "name", None)
+    return str(name) if name else str(tool)
+
+
+def _tool_result_text(result: Any) -> str:
+    """Best-effort text from an AstrBot/MCP CallToolResult."""
+    if result is None:
+        return ""
+    content = getattr(result, "content", None)
+    if content is None:
+        return str(result)
+    blocks = content if isinstance(content, list) else [content]
+    texts = []
+    for b in blocks:
+        t = getattr(b, "text", None)
+        texts.append(t if t else (b if isinstance(b, str) else str(b)))
+    joined = "\n".join(s for s in texts if s)
+    return joined or str(result)
+
+
+def _extract_image_captions(req: Any) -> list[str]:
+    """Pull AstrBot image captions out of req.extra_user_content_parts."""
+    captions: list[str] = []
+    for part in getattr(req, "extra_user_content_parts", None) or []:
+        captions.extend(parse_image_captions(getattr(part, "text", "") or ""))
+    return captions
 
 
 def _fmt_ts(ts: float) -> str:
