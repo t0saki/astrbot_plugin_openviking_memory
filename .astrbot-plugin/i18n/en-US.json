@@ -65,7 +65,16 @@
       "description": "Capture LLM tool call inputs/outputs as structured tool parts"
     },
     "capture_image_caption": {
-      "description": "Capture AstrBot's image-to-text caption (requires image captioning enabled in AstrBot) as memory, marked as image-derived"
+      "description": "Capture AstrBot's image-to-text caption (bot-directed images only) as memory, marked as image-derived. Ignored when caption_all_images is on"
+    },
+    "caption_all_images": {
+      "description": "Actively transcribe EVERY image (incl. ambient group images, not just bot-directed) by calling a vision provider per image. Costs one VLM call per image"
+    },
+    "image_caption_provider_id": {
+      "description": "Provider ID used to transcribe images (empty = AstrBot's default_image_caption_provider_id). Required for caption_all_images"
+    },
+    "image_caption_prompt": {
+      "description": "Prompt for image transcription (empty = AstrBot's image_caption_prompt or a built-in Chinese default)"
     },
     "backfill_on_first_seen": {
       "description": "Pull historical messages when a venue is first seen"

@@ -65,7 +65,16 @@
       "description": "以结构化 tool part 捕获 LLM 工具调用的输入/输出"
     },
     "capture_image_caption": {
-      "description": "把 AstrBot 的图片转述文字（需在 AstrBot 开启图片转述）入库，并标记为图片来源"
+      "description": "把 AstrBot 的图片转述文字（仅限发给 bot 的图）入库并标记图片来源；开启 caption_all_images 时此项忽略"
+    },
+    "caption_all_images": {
+      "description": "主动转写每一张图（含群里互发、未@bot 的图）：对每张图调用一次视觉模型。每张图一次 VLM 调用"
+    },
+    "image_caption_provider_id": {
+      "description": "用于转写图片的 provider ID（留空则用 AstrBot 的 default_image_caption_provider_id）。caption_all_images 需要它"
+    },
+    "image_caption_prompt": {
+      "description": "图片转写的提示词（留空则用 AstrBot 的 image_caption_prompt 或内置中文默认）"
     },
     "backfill_on_first_seen": {
       "description": "首次接入群聊时拉取历史消息"

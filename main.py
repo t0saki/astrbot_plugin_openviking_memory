@@ -13,6 +13,7 @@ viking://user/<bot>/peers/<sender_id>/.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -196,8 +197,6 @@ class OpenVikingMemoryPlugin(Star):
     @filter.event_message_type(EventMessageType.ALL)
     async def on_user_message(self, event: AstrMessageEvent):
         info = self._extract_event_info(event)
-        if not info["text"].strip():
-            return
         # Don't capture our own commands as memory, and don't let them double-fire
         # backfill alongside the command handler.
         if _is_self_command(info["text"]):
@@ -207,6 +206,14 @@ class OpenVikingMemoryPlugin(Star):
         if self.cfg.is_bypassed(venue_id):
             return
 
+        msg_chain = getattr(event, "message_obj", None)
+        images = (
+            self._collect_images(msg_chain) if (self.cfg.caption_all_images and msg_chain) else []
+        )
+        has_text = bool(info["text"].strip())
+        if not has_text and not images:
+            return
+
         ov_user_id = derive_ov_user_id(
             self.cfg, info["platform"], info["group_id"], info["sender_id"]
         )
@@ -214,30 +221,36 @@ class OpenVikingMemoryPlugin(Star):
         auth = self._auth(venue_id)
         session_id = derive_session_id(venue_id)
         is_group = venue_is_group(venue_id)
-
-        parts = [
-            user_text_part(
-                info["text"],
-                info["sender_name"],
-                info["sender_id"],
-                is_group,
-                group_id=info["group_id"],
-            )
-        ]
-
-        msg_chain = getattr(event, "message_obj", None)
-        if msg_chain:
-            self._append_media_placeholders(msg_chain, parts)
-
         peer_id = self._peer_id_for(info["sender_id"])
-        payload = build_message("user", parts)
-        ok = await self.ov.add_message(session_id, payload, peer_id=peer_id, **auth)
-        if ok:
-            self.scheduler.set_auth(session_id, auth)
-            await self.scheduler.record_message(session_id, estimate_tokens(info["text"]))
-            self.presence.record(venue_id, peer_id)
-        else:
-            self.logger.warning("[OV] add_message failed for %s", session_id)
+        self.presence.record(venue_id, peer_id)
+
+        if has_text:
+            parts = [
+                user_text_part(
+                    info["text"],
+                    info["sender_name"],
+                    info["sender_id"],
+                    is_group,
+                    group_id=info["group_id"],
+                )
+            ]
+            if msg_chain:
+                self._append_media_placeholders(msg_chain, parts)
+            ok = await self.ov.add_message(
+                session_id, build_message("user", parts), peer_id=peer_id, **auth
+            )
+            if ok:
+                self.scheduler.set_auth(session_id, auth)
+                await self.scheduler.record_message(session_id, estimate_tokens(info["text"]))
+            else:
+                self.logger.warning("[OV] add_message failed for %s", session_id)
+
+        # Actively transcribe every image (not just bot-directed ones) in the
+        # background so the VLM call doesn't block message handling.
+        if images:
+            asyncio.create_task(
+                self._caption_images(images, session_id, auth, peer_id, info, is_group)
+            )
 
         await self.backfill.maybe_trigger(
             venue_id,
@@ -246,6 +259,61 @@ class OpenVikingMemoryPlugin(Star):
             auth,
             event=event,
         )
+
+    def _collect_images(self, msg_chain: Any) -> list:
+        chain = getattr(msg_chain, "message", None) or []
+        return [c for c in chain if type(c).__name__ == "Image"]
+
+    def _astrbot_provider_setting(self, key: str, default: str = "") -> str:
+        try:
+            cfg = self.context.get_config()
+            return (cfg.get("provider_settings", {}) or {}).get(key, default)
+        except Exception:
+            return default
+
+    def _image_caption_provider(self):
+        pid = self.cfg.image_caption_provider_id or self._astrbot_provider_setting(
+            "default_image_caption_provider_id", ""
+        )
+        if not pid:
+            self.logger.warning("[OV] caption_all_images on but no image caption provider set")
+            return None
+        try:
+            return self.context.get_provider_by_id(pid)
+        except Exception:
+            self.logger.warning("[OV] image caption provider %s not found", pid)
+            return None
+
+    def _image_caption_prompt(self) -> str:
+        return (
+            self.cfg.image_caption_prompt
+            or self._astrbot_provider_setting("image_caption_prompt", "")
+            or "请用中文描述这张图片，尽量包含其中的文字内容。"
+        )
+
+    async def _caption_images(self, images, session_id, auth, peer_id, info, is_group):
+        provider = self._image_caption_provider()
+        if provider is None:
+            return
+        prompt = self._image_caption_prompt()
+        for comp in images:
+            try:
+                path = await comp.convert_to_file_path()
+                resp = await provider.text_chat(prompt=prompt, image_urls=[path])
+                cap = (getattr(resp, "completion_text", "") or "").strip()
+            except Exception:
+                self.logger.exception("[OV] image caption failed")
+                continue
+            if not cap:
+                continue
+            part = image_caption_part(
+                cap, info["sender_name"], info["sender_id"], is_group, info["group_id"]
+            )
+            if await self.ov.add_message(
+                session_id, build_message("user", [part]), peer_id=peer_id, **auth
+            ):
+                self.scheduler.set_auth(session_id, auth)
+                await self.scheduler.record_message(session_id, estimate_tokens(cap))
 
     def _append_media_placeholders(self, msg_chain: Any, parts: list):
         chain = getattr(msg_chain, "message", None) or []
@@ -281,7 +349,9 @@ class OpenVikingMemoryPlugin(Star):
         # the request (req built before this hook fires). Image-only messages have
         # empty message_str, so on_user_message skipped them — capture the caption
         # here as the image's textual content.
-        if self.cfg.capture_image_caption:
+        # When caption_all_images is on, on_user_message already transcribes every
+        # image (including this one) — don't also capture AstrBot's caption here.
+        if self.cfg.capture_image_caption and not self.cfg.caption_all_images:
             is_group = venue_is_group(venue_id)
             for cap in _extract_image_captions(req):
                 part = image_caption_part(
