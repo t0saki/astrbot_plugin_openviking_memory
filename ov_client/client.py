@@ -1,7 +1,11 @@
 """
 Async HTTP client for the OpenViking server API.
 
-All auth uses Authorization: Bearer header (no X-Api-Key).
+Targets peer-contract OpenViking servers (PR #2236+). Identity is derived from
+the Bearer key: in standard api_key mode the server 403s on X-OpenViking-Account
+/ X-OpenViking-User and ignores X-OpenViking-Agent (the agent identity layer was
+removed). Those headers are only sent when trusted_mode is set (auth_mode=trusted
+behind a gateway).
 """
 
 from __future__ import annotations
@@ -16,6 +20,13 @@ logger = logging.getLogger("astrbot_plugin_openviking_memory")
 
 DEFAULT_TIMEOUT = 15.0
 
+# Sent at commit when peer memory is enabled: extract both the bot's own (self)
+# memory and a per-person (peer) profile for each peer_id seen in the batch.
+PEER_MEMORY_POLICY: dict[str, dict[str, bool]] = {
+    "self": {"enabled": True},
+    "peer": {"enabled": True},
+}
+
 
 class OVClient:
     """Thin wrapper over OV REST endpoints needed by the plugin."""
@@ -25,13 +36,13 @@ class OVClient:
         base_url: str,
         api_key: str = "",
         account_id: str = "",
-        agent_id: str = "",
+        trusted_mode: bool = False,
         timeout: float = DEFAULT_TIMEOUT,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.account_id = account_id
-        self.agent_id = agent_id
+        self.trusted_mode = trusted_mode
         self._http = httpx.AsyncClient(timeout=timeout)
 
     def _headers(
@@ -43,12 +54,13 @@ class OVClient:
         h: dict[str, str] = {"Content-Type": "application/json"}
         if key:
             h["Authorization"] = f"Bearer {key}"
-        if self.account_id:
-            h["X-OpenViking-Account"] = self.account_id
-        if user_id:
-            h["X-OpenViking-User"] = user_id
-        if self.agent_id:
-            h["X-OpenViking-Agent"] = self.agent_id
+        # Identity is derived from the Bearer key. Only assert it via headers in
+        # trusted mode; in api_key mode these 403 (and -Agent was removed).
+        if self.trusted_mode:
+            if self.account_id:
+                h["X-OpenViking-Account"] = self.account_id
+            if user_id:
+                h["X-OpenViking-User"] = user_id
         return h
 
     async def close(self):
@@ -96,9 +108,14 @@ class OVClient:
         payload: dict[str, Any],
         api_key: str | None = None,
         user_id: str | None = None,
+        peer_id: str | None = None,
     ) -> bool:
         import json as _json
 
+        # peer_id (peer contract) tags the message with the stable id of "the
+        # other party"; set on incoming messages so commit extracts peer memory.
+        if peer_id:
+            payload = {**payload, "peer_id": peer_id}
         body = _json.dumps(payload, ensure_ascii=False, default=str)
         r = await self._http.post(
             f"{self.base_url}/api/v1/sessions/{quote(session_id)}/messages",
@@ -114,11 +131,16 @@ class OVClient:
         session_id: str,
         api_key: str | None = None,
         user_id: str | None = None,
+        memory_policy: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
+        # memory_policy (peer contract) overrides the session default for this
+        # commit, e.g. {"self": {"enabled": True}, "peer": {"enabled": True}}.
+        # Empty body still forces a commit regardless of pending threshold.
+        body = {"memory_policy": memory_policy} if memory_policy else {}
         r = await self._http.post(
             f"{self.base_url}/api/v1/sessions/{quote(session_id)}/commit",
             headers=self._headers(api_key=api_key, user_id=user_id),
-            json={},
+            json=body,
         )
         if r.status_code == 200:
             return r.json().get("result")

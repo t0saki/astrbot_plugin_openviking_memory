@@ -36,10 +36,13 @@ class SessionState:
 
 class CommitScheduler:
     def __init__(self, client: OVClient, cfg: PluginConfig):
+        from .client import PEER_MEMORY_POLICY
+
         self._client = client
         self._cfg = cfg
         self._sessions: dict[str, SessionState] = {}
         self._auth: dict[str, dict] = {}
+        self._memory_policy = PEER_MEMORY_POLICY if cfg.peer_enabled else None
         self._lock = asyncio.Lock()
 
     def set_auth(self, session_id: str, auth: dict):
@@ -93,7 +96,9 @@ class CommitScheduler:
 
         auth = self._auth.get(session_id, {})
         try:
-            result = await self._client.commit_session(session_id, **auth)
+            result = await self._client.commit_session(
+                session_id, memory_policy=self._memory_policy, **auth
+            )
             if result is not None:
                 logger.info(
                     "committed session %s (%d msgs, ~%d tokens)",

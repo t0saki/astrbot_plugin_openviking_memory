@@ -1,40 +1,55 @@
 {
   "ov_base_url": {
-    "description": "OpenViking server URL",
+    "description": "OpenViking server URL (must be a peer-contract server, i.e. OpenViking with PR #2236 or later)",
     "type": "string",
     "default": "http://localhost:1933"
   },
   "ov_admin_api_key": {
-    "description": "Admin API key (only used to create venue users on first encounter)",
+    "description": "Admin API key (only used in self_scope=venue mode to mint a per-venue OV user)",
     "type": "string"
   },
   "ov_user_api_key": {
-    "description": "User API key for global_user mode (skip admin user creation)",
+    "description": "User API key. Used directly as the Bearer identity in self_scope=global mode",
     "type": "string"
-  },
-  "ov_agent_id": {
-    "description": "OV agent identifier sent via X-OpenViking-Agent header (empty to skip)",
-    "type": "string",
-    "default": "astrbot"
   },
   "ov_account_id": {
-    "description": "OV account ID this plugin operates under",
+    "description": "OV account ID (only needed for the admin user-creation URL in self_scope=venue mode)",
     "type": "string"
   },
-  "isolation_mode": {
-    "description": "Memory isolation: venue_user (per-group/DM, default) | venue_user_fanout (cross-venue sharing) | global_user (single user)",
+  "self_scope": {
+    "description": "Memory owner (self) granularity: global (one bot self, peers shared across all venues, default) | venue (per-group self, peers isolated per group)",
     "type": "string",
-    "default": "venue_user"
+    "default": "global"
+  },
+  "global_user_id": {
+    "description": "OV user ID for the bot self in global mode when only an admin key is available (minted once). Ignored when ov_user_api_key is set.",
+    "type": "string",
+    "default": "astrbot-global"
   },
   "isolation_overrides": {
-    "description": "Per-group isolation mode overrides as JSON, e.g. {\"123456\": \"venue_user_fanout\"}",
+    "description": "Per-group self_scope overrides as JSON, e.g. {\"123456\": \"venue\"}. Legacy values (global_user/venue_user/venue_user_fanout) are auto-mapped.",
     "type": "text",
     "default": "{}"
   },
-  "global_user_id": {
-    "description": "OV user ID used in global_user mode",
+  "peer_enabled": {
+    "description": "Tag incoming messages with peer_id (sender) and commit with self+peer memory_policy, so OV builds a per-person profile under viking://user/<bot>/peers/<sender>/",
+    "type": "bool",
+    "default": true
+  },
+  "peer_recall_scope": {
+    "description": "Which peers to recall: speaker (self + current speaker) | speaker_plus_active (also recently-active members, default) | none (self only)",
     "type": "string",
-    "default": "astrbot-global"
+    "default": "speaker_plus_active"
+  },
+  "peer_recall_active_window": {
+    "description": "Max number of recently-active members to also recall in speaker_plus_active mode",
+    "type": "int",
+    "default": 5
+  },
+  "trusted_mode": {
+    "description": "Send X-OpenViking-Account/User identity headers (only for OV servers running auth_mode=trusted behind a gateway). Leave false for standard api_key servers.",
+    "type": "bool",
+    "default": false
   },
   "auto_recall_enabled": {
     "description": "Auto-recall memories on every LLM request",
@@ -80,11 +95,6 @@
     "description": "Capture LLM tool call inputs/outputs",
     "type": "bool",
     "default": true
-  },
-  "fanout_member_cache_ttl_seconds": {
-    "description": "TTL for cached group member lists (fanout mode)",
-    "type": "int",
-    "default": 3600
   },
   "backfill_on_first_seen": {
     "description": "Pull historical messages when a venue is first seen",

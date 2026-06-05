@@ -1,8 +1,14 @@
 """
 AstrBot OpenViking Memory Plugin — main entry point.
 
-Star subclass that registers hooks for auto-capture, auto-recall,
-commit scheduling, fanout, and backfill.
+Star subclass that registers hooks for auto-capture, auto-recall, commit
+scheduling, and backfill.
+
+Memory model (peer contract, OpenViking PR #2236+): the bot is the session
+"self" (an OV user); each person is a "peer" keyed by sender_id. Incoming
+messages carry peer_id; the bot's own replies and tool I/O stay self. Commit
+sends memory_policy {self, peer} so OV builds a per-person profile under
+viking://user/<bot>/peers/<sender_id>/.
 """
 
 from __future__ import annotations
@@ -19,25 +25,25 @@ from .ov_client.backfill import BackfillManager
 from .ov_client.client import OVClient
 from .ov_client.commit_scheduler import CommitScheduler
 from .ov_client.config import PluginConfig
-from .ov_client.fanout import FanoutManager
 from .ov_client.identity import (
     derive_ov_user_id,
     derive_session_id,
     derive_venue,
-    get_effective_mode,
+    get_effective_self_scope,
+    safe_peer_id,
     venue_is_group,
 )
 from .ov_client.parts import (
     assistant_text_part,
     build_message,
     estimate_tokens,
-    fanout_text_part,
     file_placeholder_part,
     image_placeholder_part,
     tool_call_part,
     tool_result_part,
     user_text_part,
 )
+from .ov_client.presence import PresenceTracker
 from .ov_client.recall import recall_and_format
 
 
@@ -64,7 +70,7 @@ class OpenVikingMemoryPlugin(Star):
             base_url=self.cfg.ov_base_url,
             api_key=effective_key,
             account_id=account_id,
-            agent_id=self.cfg.ov_agent_id,
+            trusted_mode=self.cfg.trusted_mode,
         )
         import hashlib
 
@@ -72,10 +78,9 @@ class OpenVikingMemoryPlugin(Star):
         self._kv_prefix = f"ov_{url_hash}_"
 
         self.scheduler = CommitScheduler(self.ov, self.cfg)
-        self.fanout = FanoutManager(
-            self.cfg,
-            kv_get=self._kv_get,
-            kv_put=self._kv_put,
+        self.presence = PresenceTracker(
+            window=self.cfg.peer_recall_active_window,
+            ttl_seconds=float(self.cfg.commit_idle_seconds),
         )
         self.backfill = BackfillManager(
             self.ov,
@@ -84,6 +89,8 @@ class OpenVikingMemoryPlugin(Star):
             kv_put=self._kv_put,
             kv_prefix=self._kv_prefix,
         )
+        # venue_id -> (api_key, fallback_user_id). fallback_user_id is only used
+        # for X-OpenViking-User assertion in trusted_mode.
         self._venue_auth: dict[str, tuple[str, str]] = {}
 
     async def _kv_get(self, key: str, default: Any = None) -> Any:
@@ -94,37 +101,58 @@ class OpenVikingMemoryPlugin(Star):
 
     # -- auth helpers ---------------------------------------------------------
 
-    async def _ensure_venue_user(self, venue_id: str, ov_user_id: str):
+    async def _mint_user_key(self, user_id: str, cache_key: str) -> str:
+        """Mint (or load cached) an OV user key via the admin API. '' on failure."""
+        cached = await self._kv_get(cache_key)
+        if cached:
+            return cached
+        if not self.cfg.ov_admin_api_key:
+            return ""
+        self.logger.info("[OV] creating user %s (account=%s)", user_id, self.ov.account_id)
+        result, err = await self.ov.create_user(user_id, self.cfg.ov_admin_api_key)
+        if result and "user_key" in result:
+            key = result["user_key"]
+            await self._kv_put(cache_key, key)
+            self.logger.info("[OV] created user %s OK", user_id)
+            return key
+        self.logger.warning("[OV] create_user %s failed: %s", user_id, err)
+        return ""
+
+    async def _ensure_self_auth(self, venue_id: str, group_id: str, ov_user_id: str):
+        """Resolve the Bearer identity (the bot self) for a venue.
+
+        global scope → one bot self for the whole instance (user key, or a single
+        minted global user). venue scope → one minted self per venue.
+        """
         if venue_id in self._venue_auth:
             return
 
-        if self.cfg.ov_user_api_key and self.cfg.isolation_mode == "global_user":
-            self._venue_auth[venue_id] = (self.cfg.ov_user_api_key, "")
-            self.logger.debug("[OV] global_user mode: using user key directly")
+        scope = get_effective_self_scope(self.cfg, group_id)
+
+        if scope == "global":
+            if self.cfg.ov_user_api_key:
+                self._venue_auth[venue_id] = (self.cfg.ov_user_api_key, "")
+                return
+            cache_key = f"{self._kv_prefix}gkey::{self.cfg.global_user_id}"
+            key = await self._mint_user_key(self.cfg.global_user_id, cache_key)
+            self._venue_auth[venue_id] = self._auth_or_fallback(key, self.cfg.global_user_id)
             return
 
-        cached_key = await self._kv_get(f"{self._kv_prefix}key::{venue_id}")
-        if cached_key:
-            self._venue_auth[venue_id] = (cached_key, "")
-            self.logger.debug("[OV] venue %s: loaded cached key", venue_id)
-            return
+        # venue scope: mint a per-venue self.
+        key = await self._mint_user_key(ov_user_id, f"{self._kv_prefix}key::{venue_id}")
+        self._venue_auth[venue_id] = self._auth_or_fallback(key, ov_user_id)
 
-        if not self.cfg.ov_admin_api_key:
-            self._venue_auth[venue_id] = ("", "")
-            self.logger.warning("[OV] no admin key — no user isolation")
-            return
-
-        self.logger.info("[OV] creating user %s (account=%s)", ov_user_id, self.ov.account_id)
-        result, err = await self.ov.create_user(ov_user_id, self.cfg.ov_admin_api_key)
-        if result and "user_key" in result:
-            key = result["user_key"]
-            await self._kv_put(f"{self._kv_prefix}key::{venue_id}", key)
-            self._venue_auth[venue_id] = (key, "")
-            self.logger.info("[OV] created user %s OK", ov_user_id)
-            return
-
-        self._venue_auth[venue_id] = ("", ov_user_id)
-        self.logger.warning("[OV] create_user %s failed: %s — admin fallback", ov_user_id, err)
+    def _auth_or_fallback(self, key: str, user_id: str) -> tuple[str, str]:
+        if key:
+            return (key, "")
+        if self.cfg.trusted_mode:
+            # Gateway asserts identity via X-OpenViking-User using the root/admin key.
+            return ("", user_id)
+        self.logger.warning(
+            "[OV] no user key for %s (mint failed, not trusted_mode) — memory disabled",
+            user_id,
+        )
+        return ("", "")
 
     def _auth(self, venue_id: str) -> dict[str, str | None]:
         api_key, user_id = self._venue_auth.get(venue_id, ("", ""))
@@ -143,6 +171,9 @@ class OpenVikingMemoryPlugin(Star):
             "sender_name": str(sender_name),
             "text": str(text),
         }
+
+    def _peer_id_for(self, sender_id: str) -> str | None:
+        return safe_peer_id(sender_id) if self.cfg.peer_enabled else None
 
     # -- hook: on_astrbot_loaded ----------------------------------------------
 
@@ -173,7 +204,7 @@ class OpenVikingMemoryPlugin(Star):
         ov_user_id = derive_ov_user_id(
             self.cfg, info["platform"], info["group_id"], info["sender_id"]
         )
-        await self._ensure_venue_user(venue_id, ov_user_id)
+        await self._ensure_self_auth(venue_id, info["group_id"], ov_user_id)
         auth = self._auth(venue_id)
         session_id = derive_session_id(venue_id)
         is_group = venue_is_group(venue_id)
@@ -184,26 +215,15 @@ class OpenVikingMemoryPlugin(Star):
         if msg_chain:
             self._append_media_placeholders(msg_chain, parts)
 
+        peer_id = self._peer_id_for(info["sender_id"])
         payload = build_message("user", parts)
-        ok = await self.ov.add_message(session_id, payload, **auth)
+        ok = await self.ov.add_message(session_id, payload, peer_id=peer_id, **auth)
         if ok:
             self.scheduler.set_auth(session_id, auth)
             await self.scheduler.record_message(session_id, estimate_tokens(info["text"]))
+            self.presence.record(venue_id, peer_id)
         else:
             self.logger.warning("[OV] add_message failed for %s", session_id)
-
-        await self.fanout.record_observation(info["platform"], info["sender_id"], venue_id)
-
-        mode = get_effective_mode(self.cfg, info["group_id"])
-        if mode == "venue_user_fanout":
-            await self._fanout_message(
-                info["text"],
-                info["sender_name"],
-                info["sender_id"],
-                venue_id,
-                info["platform"],
-                event,
-            )
 
         await self.backfill.maybe_trigger(
             venue_id,
@@ -211,7 +231,6 @@ class OpenVikingMemoryPlugin(Star):
             info["group_id"],
             auth,
             event=event,
-            fanout_write=(self._fanout_backfill_message if mode == "venue_user_fanout" else None),
         )
 
     def _append_media_placeholders(self, msg_chain: Any, parts: list):
@@ -226,42 +245,6 @@ class OpenVikingMemoryPlugin(Star):
                 name = getattr(comp, "name", "") or getattr(comp, "file", "") or ""
                 if name:
                     parts.append(file_placeholder_part(name))
-
-    async def _fanout_message(
-        self,
-        text: str,
-        sender_name: str,
-        sender_id: str,
-        origin_venue_id: str,
-        platform: str,
-        event: Any,
-    ):
-        targets = await self.fanout.get_fanout_targets(
-            platform,
-            sender_id,
-            origin_venue_id,
-            event=event,
-        )
-        for target_venue_id in targets:
-            target_ov_user_id = f"astrbot-{target_venue_id}"
-            await self._ensure_venue_user(target_venue_id, target_ov_user_id)
-            target_auth = self._auth(target_venue_id)
-            target_session_id = derive_session_id(target_venue_id)
-            parts = [fanout_text_part(text, origin_venue_id, sender_name, sender_id)]
-            payload = build_message("user", parts)
-            await self.ov.add_message(target_session_id, payload, **target_auth)
-            self.scheduler.set_auth(target_session_id, target_auth)
-            await self.scheduler.record_message(target_session_id, estimate_tokens(text))
-
-    async def _fanout_backfill_message(self, **kwargs):
-        await self._fanout_message(
-            text=kwargs["text"],
-            sender_name=kwargs["sender_name"],
-            sender_id=kwargs["sender_id"],
-            origin_venue_id=kwargs["origin_venue_id"],
-            platform=kwargs["platform"],
-            event=kwargs.get("event"),
-        )
 
     # -- hook: recall on LLM request ------------------------------------------
 
@@ -282,7 +265,11 @@ class OpenVikingMemoryPlugin(Star):
         ov_user_id = derive_ov_user_id(
             self.cfg, info["platform"], info["group_id"], info["sender_id"]
         )
+        await self._ensure_self_auth(venue_id, info["group_id"], ov_user_id)
         auth = self._auth(venue_id)
+
+        speaker_pid = self._peer_id_for(info["sender_id"])
+        active = self.presence.active(venue_id, exclude=speaker_pid)
 
         block = await recall_and_format(
             self.ov,
@@ -290,6 +277,8 @@ class OpenVikingMemoryPlugin(Star):
             query,
             venue_id,
             ov_user_id,
+            speaker_id=info["sender_id"],
+            active_member_ids=active,
             **auth,
         )
         if block:
@@ -316,29 +305,13 @@ class OpenVikingMemoryPlugin(Star):
         if not reply_text.strip():
             return
 
+        # The bot's own reply is the session owner (self) — no peer_id.
         auth = self._auth(venue_id)
         session_id = derive_session_id(venue_id)
         parts = [assistant_text_part(reply_text)]
         payload = build_message("assistant", parts)
         await self.ov.add_message(session_id, payload, **auth)
         await self.scheduler.record_message(session_id, estimate_tokens(reply_text))
-
-        mode = get_effective_mode(self.cfg, info["group_id"])
-        if mode == "venue_user_fanout":
-            targets = await self.fanout.get_fanout_targets(
-                info["platform"],
-                info["sender_id"],
-                venue_id,
-                event=event,
-            )
-            for target_venue_id in targets:
-                target_ov_uid = f"astrbot-{target_venue_id}"
-                await self._ensure_venue_user(target_venue_id, target_ov_uid)
-                target_auth = self._auth(target_venue_id)
-                target_session_id = derive_session_id(target_venue_id)
-                fo_parts = [fanout_text_part(reply_text, venue_id)]
-                fo_payload = build_message("assistant", fo_parts)
-                await self.ov.add_message(target_session_id, fo_payload, **target_auth)
 
     # -- hook: tool I/O capture -----------------------------------------------
 
@@ -394,32 +367,36 @@ class OpenVikingMemoryPlugin(Star):
         healthy = await self.ov.health()
         sched = self.scheduler.get_status(session_id)
         bf_status = await self.backfill.get_status(venue_id)
-        mode = get_effective_mode(self.cfg, info["group_id"])
+        scope = get_effective_self_scope(self.cfg, info["group_id"])
 
         ov_user_id = derive_ov_user_id(
             self.cfg, info["platform"], info["group_id"], info["sender_id"]
         )
         api_key, fallback_uid = self._venue_auth.get(venue_id, ("", ""))
-        if api_key and self.cfg.ov_user_api_key and mode == "global_user":
-            key_status = "user key (global)"
+        if api_key and scope == "global" and self.cfg.ov_user_api_key:
+            key_status = "user key (global self)"
         elif api_key:
-            key_status = "per-venue key"
+            key_status = "minted user key"
         elif fallback_uid:
-            key_status = f"admin fallback (user={fallback_uid})"
+            key_status = f"trusted header (user={fallback_uid})"
         else:
             key_status = "no auth"
+
+        peer_status = f"on ({self.cfg.peer_recall_scope})" if self.cfg.peer_enabled else "off"
 
         lines = [
             "OpenViking Memory Plugin v0.1.0",
             f"Server: {self.cfg.ov_base_url} ({'OK' if healthy else 'UNREACHABLE'})",
             f"Account: {self.ov.account_id or '(not set)'}",
-            f"OV User: {ov_user_id}",
+            f"Self scope: {scope}",
+            f"OV self user: {ov_user_id}",
             f"Auth: {key_status}",
-            f"Isolation: {mode}",
+            f"Peer memory: {peer_status}",
             f"Venue: {venue_id}",
             f"Pending: {sched['pending_messages']} msgs / ~{sched['pending_tokens']} tokens",
             f"Last commit: {_fmt_ts(sched['last_commit_ts'])}",
             f"Backfill: {bf_status}",
+            f"Active peers: {len(self.presence.active(venue_id))}",
             f"Venues: {len(self._venue_auth)}",
         ]
         yield event.plain_result("\n".join(lines))
@@ -432,9 +409,8 @@ class OpenVikingMemoryPlugin(Star):
         ov_user_id = derive_ov_user_id(
             self.cfg, info["platform"], info["group_id"], info["sender_id"]
         )
-        await self._ensure_venue_user(venue_id, ov_user_id)
+        await self._ensure_self_auth(venue_id, info["group_id"], ov_user_id)
         auth = self._auth(venue_id)
-        mode = get_effective_mode(self.cfg, info["group_id"])
 
         await self.backfill.force_backfill(
             venue_id,
@@ -442,7 +418,6 @@ class OpenVikingMemoryPlugin(Star):
             info["group_id"],
             auth,
             event=event,
-            fanout_write=(self._fanout_backfill_message if mode == "venue_user_fanout" else None),
         )
         yield event.plain_result(f"Backfill triggered for {venue_id}")
 

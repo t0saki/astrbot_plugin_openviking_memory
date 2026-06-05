@@ -52,20 +52,6 @@ def tool_result_part(tool_name: str, tool_output: Any) -> dict[str, Any]:
     }
 
 
-def fanout_text_part(
-    text: str,
-    origin_venue_id: str,
-    sender_name: str = "",
-    sender_id: str = "",
-) -> dict[str, Any]:
-    """Text part with origin marker for fanout writes."""
-    prefix = f"[from {origin_venue_id}"
-    if sender_name:
-        prefix += f" · {sender_name}({sender_id})" if sender_id else f" · {sender_name}"
-    prefix += "] "
-    return {"type": "text", "text": prefix + text}
-
-
 def build_message(role: str, parts: list[dict]) -> dict[str, Any]:
     if len(parts) == 1 and parts[0]["type"] == "text":
         return {"role": role, "content": parts[0]["text"]}

@@ -13,9 +13,9 @@ import logging
 import time
 from typing import Any, Awaitable, Callable
 
-from .client import OVClient
+from .client import PEER_MEMORY_POLICY, OVClient
 from .config import PluginConfig
-from .identity import derive_session_id, venue_is_group
+from .identity import derive_session_id, safe_peer_id, venue_is_group
 from .parts import build_message, user_text_part
 
 logger = logging.getLogger("astrbot_plugin_openviking_memory")
@@ -46,7 +46,6 @@ class BackfillManager:
         group_id: str,
         auth: dict,
         event: Any = None,
-        fanout_write: Callable | None = None,
     ):
         if not self._cfg.backfill_on_first_seen:
             return
@@ -69,9 +68,7 @@ class BackfillManager:
                 pass
 
         self._running.add(venue_id)
-        asyncio.create_task(
-            self._run_backfill(venue_id, platform, group_id, auth, event, fanout_write)
-        )
+        asyncio.create_task(self._run_backfill(venue_id, platform, group_id, auth, event))
 
     async def force_backfill(
         self,
@@ -80,12 +77,11 @@ class BackfillManager:
         group_id: str,
         auth: dict,
         event: Any = None,
-        fanout_write: Callable | None = None,
     ):
         done_key = f"{self._kv_prefix}bf_done::{venue_id}"
         await self._kv_put(done_key, "")
         self._running.discard(venue_id)
-        await self.maybe_trigger(venue_id, platform, group_id, auth, event, fanout_write)
+        await self.maybe_trigger(venue_id, platform, group_id, auth, event)
 
     async def _run_backfill(
         self,
@@ -94,7 +90,6 @@ class BackfillManager:
         group_id: str,
         auth: dict,
         event: Any,
-        fanout_write: Callable | None,
     ):
         status_key = f"{self._kv_prefix}bf_status::{venue_id}"
         await self._kv_put(status_key, json.dumps({"status": "running", "ts": time.time()}))
@@ -120,24 +115,16 @@ class BackfillManager:
                     sender_id = msg.get("sender_id", "")
                     parts = [user_text_part(text, sender_name, sender_id, is_group)]
                     payload = build_message("user", parts)
-                    await self._client.add_message(session_id, payload, **auth)
-
-                    if fanout_write and is_group:
-                        await fanout_write(
-                            text=text,
-                            sender_name=sender_name,
-                            sender_id=sender_id,
-                            origin_venue_id=venue_id,
-                            platform=platform,
-                            event=event,
-                        )
+                    peer_id = safe_peer_id(sender_id) if self._cfg.peer_enabled else None
+                    await self._client.add_message(session_id, payload, peer_id=peer_id, **auth)
                     count += 1
 
                 if batch_start + self._cfg.backfill_batch_size < len(messages):
                     await asyncio.sleep(self._cfg.backfill_throttle_ms / 1000.0)
 
             if count > 0:
-                await self._client.commit_session(session_id, **auth)
+                policy = PEER_MEMORY_POLICY if self._cfg.peer_enabled else None
+                await self._client.commit_session(session_id, memory_policy=policy, **auth)
 
             logger.info("backfill %s: ingested %d messages", venue_id, count)
             await self._mark_done(venue_id, count)

@@ -4,7 +4,7 @@
 
 为 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 提供 [OpenViking](https://github.com/volcengine/OpenViking) 长期记忆能力。
 
-自动捕获群聊/私聊对话，在每次 LLM 请求前语义召回相关记忆，支持可配置的群/用户记忆隔离。
+自动捕获群聊/私聊对话，在每次 LLM 请求前语义召回相关记忆。基于 OpenViking 的 **peer 记忆模型**：bot 是会话的「self」，每个人是一个「peer」，OV 会为每个说话的人单独建立画像，支持跨群跨会话的「记住每一个人」。
 
 ## 安装
 
@@ -15,13 +15,15 @@
 ### 前置条件
 
 - AstrBot >= 4.23.1
-- OpenViking 服务端已运行并可访问（部署方式参考 [OpenViking 文档](https://docs.openviking.ai)）
-- 拥有 Admin API key（用于自动创建 venue user）或 User API key（`global_user` 模式）
+- **OpenViking 服务端需为 peer-contract 版本（PR #2236 及之后）**，否则身份与召回行为不兼容
+- 服务端以标准 `api_key` 模式运行：身份从 Bearer key 反解，插件不再发送 `X-OpenViking-*` 身份头（仅 `trusted_mode` 例外）
+- 拥有 User API key（`global` 模式直接使用，推荐）或 Admin API key（`venue` 模式下自动创建 per-venue user）
 
 ## 功能概览
 
 - **自动捕获**：每条用户消息和 bot 回复自动写入 OV session，工具调用的输入/输出也会被捕获
-- **自动召回**：每次 LLM 请求前，插件搜索 OV 中的相关记忆并追加到系统提示
+- **Peer 画像**：群成员的发言带上 `peer_id`（发送者），commit 时 OV 为每个人单独建立画像，存于 `viking://user/<bot>/peers/<sender_id>/`；bot 自己的回复与工具 I/O 归为 self
+- **自动召回**：每次 LLM 请求前，插件检索 self（bot/群上下文）+ 当前说话人 + 近期活跃成员的画像并追加到系统提示
 - **自动提交**：根据消息数、token 估算值或空闲超时自动 commit session，触发长期记忆提取
 - **历史消化**：首次接入群聊时，自动拉取平台历史消息并入库（默认开启，可关闭）
 
@@ -38,39 +40,45 @@
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| `ov_base_url` | `http://localhost:1933` | OpenViking 服务端地址 |
-| `ov_admin_api_key` | | Admin API key，用于自动创建 venue user（`global_user` 模式下可用 `ov_user_api_key` 代替） |
-| `ov_user_api_key` | | 普通 User API key，`global_user` 模式下直接使用，无需 Admin key |
-| `ov_account_id` | | OV account ID（留空从 API key 自动解析） |
-| `isolation_mode` | `venue_user` | 隔离模式，见下方说明 |
-| `isolation_overrides` | `{}` | 按群号覆盖隔离模式，如 `{"123456": "venue_user_fanout"}` |
+| `ov_base_url` | `http://localhost:1933` | OpenViking 服务端地址（需 peer-contract 版本） |
+| `ov_user_api_key` | | User API key，`global` 模式下直接作为 bot self 的身份，**推荐** |
+| `ov_admin_api_key` | | Admin API key，仅 `venue` 模式下用于创建 per-venue user |
+| `ov_account_id` | | OV account ID（留空从 API key 自动解析，仅 `venue` 建用户时需要） |
+| `self_scope` | `global` | 记忆归属（self）粒度，见下方说明 |
+| `global_user_id` | `astrbot-global` | `global` 模式且只有 admin key 时，自动创建的 bot self 用户名 |
+| `isolation_overrides` | `{}` | 按群号覆盖 `self_scope`，如 `{"123456": "venue"}` |
+| `peer_enabled` | `true` | 给群成员消息打 `peer_id` 并在 commit 时启用 self+peer 提取（关闭则退化为只有 self 记忆） |
+| `peer_recall_scope` | `speaker_plus_active` | 召回哪些 peer：`speaker`（self+当前说话人）/ `speaker_plus_active`（再加近期活跃成员）/ `none`（仅 self） |
+| `peer_recall_active_window` | `5` | `speaker_plus_active` 下额外召回的近期活跃成员上限 |
+| `trusted_mode` | `false` | 仅当 OV 以 `auth_mode=trusted`（受信网关后）运行时开启，会发送 `X-OpenViking-Account/User` 头 |
 | `auto_recall_enabled` | `true` | 是否自动召回 |
 | `recall_limit` | `8` | 最多召回条数 |
 | `recall_min_score` | `0.35` | 语义匹配最低分 |
 | `recall_token_budget` | `2000` | 注入上下文的 token 预算 |
 | `commit_message_threshold` | `20` | 累积 N 条消息后自动 commit |
 | `commit_token_threshold` | `4096` | 累积 token 超过此值后自动 commit |
-| `commit_idle_seconds` | `1800` | 空闲 N 秒后自动 commit |
+| `commit_idle_seconds` | `1800` | 空闲 N 秒后自动 commit（也用作 peer 召回的「近期」时间窗） |
 | `backfill_on_first_seen` | `true` | 首次接入群聊时拉取历史 |
 | `backfill_max_messages` | `500` | 每群最多拉取历史条数 |
 | `ingest_attachments` | `false` | 是否将图片/文件推送至 OV resources（需 VLM） |
 | `capture_tool_io` | `true` | 是否捕获工具调用输入/输出 |
 
-## 隔离模式
+> 旧版的 `isolation_mode`（`venue_user` / `venue_user_fanout` / `global_user`）仍可识别并自动映射到 `self_scope`（分别为 `venue` / `global` / `global`），同时打印 deprecation 日志。`venue_user_fanout` 已被 `global` + peer 取代。
 
-记忆隔离粒度在 **OV user** 层面（不是 session）。每个 venue（群或私聊）对应一个 OV user。
+## 隔离模式（self_scope）
 
-| 模式 | OV user 映射 | 行为 |
-|------|-------------|------|
-| `venue_user`（默认） | 每群 = 1 OV user；每个私聊 = 1 OV user | 群内共享记忆，群间隔离 |
-| `venue_user_fanout` | 同上 | + 用户的消息扇出到该用户所在的所有其他群/私聊 |
-| `global_user` | 整个 bot 实例 = 1 OV user | 所有记忆共享 |
+记忆模型是 **一个 bot「self」 + 每个人一个「peer」**。`self_scope` 决定 self（记忆归属）的粒度，peer 始终按人区分：
 
-### Fanout 模式
+| `self_scope` | self 映射 | peer 范围 | 行为 |
+|------|-------------|------|------|
+| `global`（默认） | 整个 bot 实例 = 1 个 self（OV user） | 跨群共享，每人一份画像 | bot 跨群「认识每一个人」；直接用 `ov_user_api_key`，无需 admin/建用户 |
+| `venue` | 每群/私聊 = 1 个 self | 按群隔离 | 群间互相隔离，隐私优先；用 admin key 自动建 per-venue user |
 
-用户 A 在群 G 发消息后，该消息也会写入 A 当前在的所有其他群和私聊。这样 bot 在群 H 回复 A 时也能知道 A 在群 G 说过什么。
+### 跨人召回
 
-代价：每条消息产生 N 次写入（N = 用户所在 venue 数）。小规模部署完全可以承受。
+所有 peer 都挂在同一个 bot self 空间下（`viking://user/<bot>/peers/*`）。默认召回 self + 当前说话人 + 近期活跃成员的画像；因此 A 在群里提问时，bot 也能召回最近活跃的 B、C 的画像（例如「Bob 喜欢什么」）。
+
+> OpenViking 不允许「一次搜全部 peer」，每个要召回的人必须显式点名——本插件通过 `peer_recall_scope` 控制点名范围。这比旧的 fanout 干净：每个人的画像只存一份，不做有损复制。
 
 ## 推荐：添加 OV MCP 工具
 

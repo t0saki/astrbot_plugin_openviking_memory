@@ -12,8 +12,10 @@ from typing import Any
 
 from .client import OVClient
 from .config import PluginConfig
-from .identity import parse_venue_origin, venue_is_group
+from .identity import parse_venue_origin, safe_peer_id, venue_is_group
 from .parts import estimate_tokens
+
+_PEER_URI_RE = re.compile(r"/peers/([^/]+)/")
 
 _PREFERENCE_RE = re.compile(
     r"prefer|preference|favorite|favourite|like|偏好|喜欢|爱好|更倾向", re.I
@@ -112,6 +114,34 @@ def _dedup(items: list[dict]) -> list[dict]:
     return out
 
 
+def _build_recall_targets(
+    cfg: PluginConfig,
+    space: str,
+    speaker_id: str | None,
+    active_member_ids: list[str] | None,
+) -> tuple[list[str], list[str]]:
+    """Explicit (target_uri list, peer_id list) for a recall.
+
+    Self memories are always included. When peer recall is on, each peer is named
+    explicitly under viking://user/<space>/peers/<peer>/memories — OV resolves
+    each target independently (see openviking/core/retrieval_targets.py), and we
+    deliberately do NOT pass a peer_id param (which would reject other peers).
+    """
+    targets = [f"viking://user/{space}/memories"]
+    peer_ids: list[str] = []
+    if cfg.peer_enabled and cfg.peer_recall_scope != "none":
+        sp = safe_peer_id(speaker_id)
+        if sp:
+            peer_ids.append(sp)
+        if cfg.peer_recall_scope == "speaker_plus_active":
+            for member in active_member_ids or []:
+                pid = safe_peer_id(member)
+                if pid and pid not in peer_ids:
+                    peer_ids.append(pid)
+    targets.extend(f"viking://user/{space}/peers/{pid}/memories" for pid in peer_ids)
+    return targets, peer_ids
+
+
 async def recall_and_format(
     client: OVClient,
     cfg: PluginConfig,
@@ -120,17 +150,19 @@ async def recall_and_format(
     ov_user_id: str,
     api_key: str | None = None,
     user_id: str | None = None,
+    speaker_id: str | None = None,
+    active_member_ids: list[str] | None = None,
 ) -> str | None:
     if not cfg.auto_recall_enabled or not query.strip():
         return None
 
     space = await _resolve_user_space(client, api_key, user_id)
-    target_uri = f"viking://user/{space}/memories"
+    targets, peer_ids = _build_recall_targets(cfg, space, speaker_id, active_member_ids)
 
-    per_source_limit = max(cfg.recall_limit * 2, 8)
+    per_source_limit = max(cfg.recall_limit * 2, 8) + 4 * len(peer_ids)
     items = await client.find(
         query=query,
-        target_uri=target_uri,
+        target_uri=targets,
         limit=per_source_limit,
         api_key=api_key,
         user_id=user_id,
@@ -174,9 +206,13 @@ async def _build_injection_block(
 
         header = f"[memory {score_pct}%"
         header += f" · {origin_label}"
-        sender = _extract_sender(abstract)
-        if is_group and sender:
-            header += f" · from:{sender}"
+        peer = _peer_from_uri(uri)
+        if peer:
+            header += f" · about:{peer}"
+        else:
+            sender = _extract_sender(abstract)
+            if is_group and sender:
+                header += f" · from:{sender}"
         header += "]"
 
         uri_line = f"- {header} {uri}"
@@ -221,3 +257,9 @@ def _extract_sender(abstract: str) -> str:
         bracket_end = abstract.index("]")
         return abstract[1:bracket_end]
     return ""
+
+
+def _peer_from_uri(uri: str) -> str:
+    """Return the peer id if uri is a peer-memory URI, else ''."""
+    m = _PEER_URI_RE.search(uri or "")
+    return m.group(1) if m else ""

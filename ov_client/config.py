@@ -2,23 +2,32 @@
 Configuration loader for the AstrBot OpenViking memory plugin.
 
 Resolution priority: env var > AstrBotConfig > built-in default.
+
+Targets peer-contract OpenViking servers only (PR #2236+): identity is derived
+from the Bearer key, X-OpenViking-* headers are sent only in trusted_mode.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Any
+
+logger = logging.getLogger("astrbot_plugin_openviking_memory")
 
 _DEFAULTS: dict[str, Any] = {
     "ov_base_url": "http://localhost:1933",
     "ov_admin_api_key": "",
     "ov_user_api_key": "",
     "ov_account_id": "",
-    "ov_agent_id": "astrbot",
-    "isolation_mode": "venue_user",
-    "isolation_overrides": {},
+    "self_scope": "global",
     "global_user_id": "astrbot-global",
+    "isolation_overrides": {},
+    "peer_enabled": True,
+    "peer_recall_scope": "speaker_plus_active",
+    "peer_recall_active_window": 5,
+    "trusted_mode": False,
     "auto_recall_enabled": True,
     "recall_limit": 8,
     "recall_min_score": 0.35,
@@ -28,7 +37,6 @@ _DEFAULTS: dict[str, Any] = {
     "commit_idle_seconds": 1800,
     "ingest_attachments": False,
     "capture_tool_io": True,
-    "fanout_member_cache_ttl_seconds": 3600,
     "backfill_on_first_seen": True,
     "backfill_max_messages": 500,
     "backfill_max_age_days": 30,
@@ -40,6 +48,33 @@ _DEFAULTS: dict[str, Any] = {
 _BOOL_TRUE = {"1", "true", "yes", "on"}
 
 _ENV_PREFIX = "OPENVIKING_ASTRBOT_"
+
+VALID_SELF_SCOPES = {"global", "venue"}
+
+# Legacy isolation_mode values → new self_scope axis. venue_user_fanout is
+# subsumed by global+peer (cross-venue per-person memory is native now).
+_LEGACY_SELF_SCOPE = {
+    "global_user": "global",
+    "venue_user": "venue",
+    "venue_user_fanout": "global",
+}
+
+
+def normalize_self_scope(value: Any, *, context: str = "") -> str:
+    """Map a self_scope or legacy isolation_mode value to global|venue."""
+    raw = str(value or "").strip()
+    if raw in VALID_SELF_SCOPES:
+        return raw
+    if raw in _LEGACY_SELF_SCOPE:
+        mapped = _LEGACY_SELF_SCOPE[raw]
+        logger.warning(
+            "[OV] deprecated isolation value %r%s → self_scope=%r",
+            raw,
+            f" ({context})" if context else "",
+            mapped,
+        )
+        return mapped
+    return "global"
 
 
 def _env(key: str) -> str | None:
@@ -94,7 +129,30 @@ class PluginConfig:
             else:
                 self._data[key] = default
 
+        self._apply_legacy(astrbot_config)
+        self._normalize_isolation_overrides()
         self._bypass_re: list[re.Pattern] | None = None
+
+    def _apply_legacy(self, astrbot_config: dict) -> None:
+        """Map a legacy isolation_mode onto self_scope when self_scope is unset."""
+        self_scope_set = _env("self_scope") is not None or "self_scope" in astrbot_config
+        legacy = _env("isolation_mode")
+        if legacy is None:
+            legacy = astrbot_config.get("isolation_mode")
+        if not self_scope_set and legacy:
+            self._data["self_scope"] = normalize_self_scope(legacy, context="legacy isolation_mode")
+        else:
+            self._data["self_scope"] = normalize_self_scope(self._data["self_scope"])
+
+    def _normalize_isolation_overrides(self) -> None:
+        overrides = self._data.get("isolation_overrides") or {}
+        if not isinstance(overrides, dict):
+            self._data["isolation_overrides"] = {}
+            return
+        self._data["isolation_overrides"] = {
+            str(group): normalize_self_scope(val, context=f"override {group}")
+            for group, val in overrides.items()
+        }
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):
